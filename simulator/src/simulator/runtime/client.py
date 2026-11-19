@@ -90,16 +90,36 @@ class ClientRuntime:
         # but the Service will create the actual context.
         # However, for our own tracking in _on_attempt_done_from_service, we'll verify timings.
         
-        on_attempt_done = partial(self._on_attempt_done_from_service, ctx, sim)
-        
+        attempt_id = len(ctx.root.attempts)
+        attempt_begin_time = sim.timestep
+
         # Determine who manages root lifecycle
         if self.cfg.retry is None:
-            # Legacy/Simple Mode: We trust the Service to tell us when Root is done.
+            # Legacy/Simple Mode: We trust the Service to tell us when Root is done,
+            # and record each of its attempts as it reports them.
+            on_attempt_done = partial(self._on_attempt_done_from_service, ctx, sim)
             on_root_done = partial(self._on_root_done, ctx)
         else:
-            # Modern Mode: Client manages retries.
-            on_root_done = lambda: None
-        
+            # Modern Mode: Client manages retries, one CALL at a time. A call is
+            # one submit_request; the service may make several attempts for it
+            # (its own retry policy) and reports each of them, but the client's
+            # policy decides on the call's result, which exists only when the
+            # service has finished: the outcome of its last attempt.
+            #
+            # Deciding on the first attempt instead made `retry: {type: none}`
+            # on a client hide every retry of the service behind it, and made a
+            # retrying client start a second call while the first was still
+            # being retried by the service.
+            last_attempt = [None]
+
+            def on_attempt_done(success, svc_time, drop_reason, queue_size,
+                                begin_time, attempt_deadline):
+                last_attempt[0] = (success, svc_time, drop_reason, queue_size, attempt_deadline)
+
+            on_root_done = partial(
+                self._on_call_done, ctx, sim, attempt_begin_time, last_attempt
+            )
+
         # Schedule Local Timeout (Projected "Walking Away")
         # If client has a timeout configured, we schedule an event to fire at deadline.
         attempt_timeout = None
@@ -107,9 +127,6 @@ class ClientRuntime:
             at = self.cfg.timeout.get_attempt_timeout()
             if at:
                 attempt_timeout = sim.timestep + at
-        
-        attempt_id = len(ctx.root.attempts)
-        attempt_begin_time = sim.timestep
 
         if attempt_timeout:
              sim.schedule(
@@ -126,6 +143,25 @@ class ClientRuntime:
             is_retry=is_retry,
             retry_budget_remaining=ctx._retry_budget_remaining,
             tenant_id=self.cfg.name,
+        )
+
+    def _on_call_done(self, ctx: AttemptCtx, sim: Simulator, call_begin_time: TimePoint, last_attempt: list):
+        """The service has finished one call of a client that has its own policy."""
+        if last_attempt[0] is None:
+            # The service made no attempt: the request's deadline had already passed.
+            success, svc_time, drop_reason = False, 0, DropReason.DEADLINE
+            queue_size, attempt_deadline = len(self.service.queue), None
+        else:
+            success, svc_time, drop_reason, queue_size, attempt_deadline = last_attempt[0]
+
+        self._on_attempt_done_from_service(
+            ctx, sim,
+            success=success,
+            svc_time=svc_time,
+            drop_reason=drop_reason,
+            queue_size=queue_size,
+            begin_time=call_begin_time,
+            attempt_deadline=attempt_deadline,
         )
 
     def _on_local_timeout(self, ctx: AttemptCtx, sim: Simulator, attempt_id: int, attempt_begin_time: TimePoint):
