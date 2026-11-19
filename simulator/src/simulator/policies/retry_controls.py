@@ -24,12 +24,15 @@ class RetryBudgetPolicy(RetryPolicy):
     _tokens: float = 0
     _max_tokens: float = 0
     retry_cost: int = 100
-    success_reward: int = 0
+    success_reward: float = 0
     _last_refill_time: int = field(default=0, init=False)
 
     def __post_init__(self):
         self.retry_cost = 100
-        self.success_reward = int(self.budget_ratio * self.retry_cost)
+        # The fraction of a retry one success earns. It was truncated to whole
+        # hundredths (`int(...)`), so a ratio of 0.0867 ran as 0.08 and any
+        # ratio below 0.01 never earned anything.
+        self.success_reward = self.budget_ratio * self.retry_cost
         self._max_tokens = self.retry_cost * self.max_retries
         self._tokens = self._max_tokens
 
@@ -353,13 +356,14 @@ class LimiterRetryBudgetPolicy(LoadLimiter):
     max_retries: int
 
     _max_tokens: int = field(init=False)
-    _success_award: int = field(init=False)
+    _success_award: float = field(init=False)
     _retry_cost: int = field(init=False)
     _tokens: float = field(init=False)
 
     def __post_init__(self):
         self._retry_cost = 100
-        self._success_award = int(self._retry_cost * self.budget_ratio)
+        # Not truncated to whole hundredths of a retry (see RetryBudgetPolicy).
+        self._success_award = self._retry_cost * self.budget_ratio
         self._max_tokens = self._retry_cost * self.max_retries
         self._tokens = self._max_tokens
 
