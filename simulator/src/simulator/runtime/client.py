@@ -93,12 +93,36 @@ class ClientRuntime:
         attempt_id = len(ctx.root.attempts)
         attempt_begin_time = sim.timestep
 
+        # The local timeout and the service's answer race. Once the client has
+        # walked away from a call, the answer to it is no longer a result: it
+        # used to be processed as a NEW attempt, which could complete the
+        # request as a success or trigger a second retry decision.
+        #
         # Determine who manages root lifecycle
         if self.cfg.retry is None:
             # Legacy/Simple Mode: We trust the Service to tell us when Root is done,
             # and record each of its attempts as it reports them.
-            on_attempt_done = partial(self._on_attempt_done_from_service, ctx, sim)
+            abandoned = [False]
+
+            def on_attempt_done(success, svc_time, drop_reason, queue_size,
+                                begin_time, attempt_deadline):
+                if abandoned[0]:
+                    # The answer to the attempt that timed out. What the service
+                    # reports after it are its own retries, which still count.
+                    abandoned[0] = False
+                    return
+                self._on_attempt_done_from_service(
+                    ctx, sim, success, svc_time, drop_reason, queue_size,
+                    begin_time, attempt_deadline,
+                )
+
             on_root_done = partial(self._on_root_done, ctx)
+
+            def answered():
+                return len(ctx.root.attempts) > attempt_id
+
+            def walk_away():
+                abandoned[0] = True
         else:
             # Modern Mode: Client manages retries, one CALL at a time. A call is
             # one submit_request; the service may make several attempts for it
@@ -111,14 +135,23 @@ class ClientRuntime:
             # retrying client start a second call while the first was still
             # being retried by the service.
             last_attempt = [None]
+            call_over = [False]
 
             def on_attempt_done(success, svc_time, drop_reason, queue_size,
                                 begin_time, attempt_deadline):
                 last_attempt[0] = (success, svc_time, drop_reason, queue_size, attempt_deadline)
 
-            on_root_done = partial(
-                self._on_call_done, ctx, sim, attempt_begin_time, last_attempt
-            )
+            def on_root_done():
+                if call_over[0]:
+                    return  # the client timed this call out; the service finished it later
+                call_over[0] = True
+                self._on_call_done(ctx, sim, attempt_begin_time, last_attempt)
+
+            def answered():
+                return call_over[0]
+
+            def walk_away():
+                call_over[0] = True
 
         # Schedule Local Timeout (Projected "Walking Away")
         # If client has a timeout configured, we schedule an event to fire at deadline.
@@ -131,7 +164,7 @@ class ClientRuntime:
         if attempt_timeout:
              sim.schedule(
                  attempt_timeout,
-                 partial(self._on_local_timeout, ctx, sim, attempt_id, attempt_begin_time)
+                 partial(self._on_local_timeout, ctx, sim, answered, walk_away, attempt_begin_time)
              )
 
         # Submit to service
@@ -164,15 +197,17 @@ class ClientRuntime:
             attempt_deadline=attempt_deadline,
         )
 
-    def _on_local_timeout(self, ctx: AttemptCtx, sim: Simulator, attempt_id: int, attempt_begin_time: TimePoint):
+    def _on_local_timeout(self, ctx: AttemptCtx, sim: Simulator, answered, walk_away, attempt_begin_time: TimePoint):
         """Handler for client-side local timeout (active interrupt)"""
         if ctx.root.done:
             return
-        if len(ctx.root.attempts) > attempt_id:
+        if answered():
             # Attempt already completed via service callback
             return
 
-        # Attempt is still in-flight at the service (zombie).
+        # Attempt is still in-flight at the service (zombie). Its answer, when
+        # it comes, is ignored.
+        walk_away()
         # Fail it locally using the actual begin time for accurate metrics.
         self._on_attempt_done_from_service(
             ctx, sim,
