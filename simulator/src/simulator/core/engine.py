@@ -29,12 +29,24 @@ class Simulator:
         return self._rng
 
     def schedule(self, at: TimePoint, fn: Callable[[], None]):
+        at = int(at)
+        if at < self.timestep:
+            # Running it would set the clock BACK to `at`: every interval that
+            # is open at that moment would get an end before its begin.
+            raise ValueError(
+                f"cannot schedule an event at {at} ns: simulator time is already "
+                f"{self.timestep} ns (negative delay or misconfigured deadline?)"
+            )
         self._seq += 1
-        ev = Event(at=int(at), seq=self._seq, action=fn)
+        ev = Event(at=at, seq=self._seq, action=fn)
         heapq.heappush(self._eventheap, ev)
         return ev
 
     def run(self, until: Optional[TimePoint] = None):
+        if until is not None and int(until) < self.timestep:
+            raise ValueError(
+                f"cannot run until {int(until)} ns: simulator time is already {self.timestep} ns"
+            )
         heap = self._eventheap
         while heap and (until is None or heap[0].at <= until):
             ev = heapq.heappop(heap)
@@ -43,4 +55,5 @@ class Simulator:
             self.timestep = ev.at
             ev.action()
         if until is not None:
-            self.timestep = int(until)
+            # max: an event may have run the simulator further itself.
+            self.timestep = max(self.timestep, int(until))
