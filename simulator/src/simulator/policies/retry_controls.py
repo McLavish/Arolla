@@ -337,7 +337,13 @@ class LimiterTimeBasedCircuitBreakerPolicy(LoadLimiter):
                 or self.half_open_delay == 0
                 or now - self._opened_at >= self.half_open_delay
             ):
-                if total >= self.min_requests and rate < (1 - self.success_threshold_rate):
+                # Close when the SUCCESS rate reaches the threshold, as the count-based
+                # breaker does. The test was written on the failure side,
+                # `rate < 1 - success_threshold_rate`: that can never hold at a
+                # threshold of 1.0, and 1 - 0.8 not being 0.2 in floating point, it
+                # also refused 4 successes out of 5 at 0.8.
+                success_rate = (total - failures) / total if total > 0 else 0.0
+                if total >= self.min_requests and success_rate >= self.success_threshold_rate:
                     self._state = CBState.CLOSED
                     self._opened_at = None
 
