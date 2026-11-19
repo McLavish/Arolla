@@ -5,6 +5,7 @@ This middleware handles admission control and retry limiting based on
 LoadLimiter policies (circuit breakers, rate limiters, retry budgets).
 """
 
+import inspect
 from collections import defaultdict
 from typing import Callable, Dict
 from simulator.middleware.base import Middleware, AttemptContext
@@ -73,7 +74,7 @@ class LoadLimiterMiddleware(Middleware):
             # Limiter blocks retry (e.g., circuit breaker open, budget exhausted)
             ctx.should_retry = False
             ctx.metadata['limiter_blocked'] = True
-            ctx.metadata['limiter_reason'] = self._get_limiter_reason()
+            ctx.metadata['limiter_reason'] = self._get_limiter_reason(ctx.end_time)
         else:
             # Limiter admits the retry
             self._retry_admitted[tenant] += 1
@@ -100,7 +101,7 @@ class LoadLimiterMiddleware(Middleware):
             for tenant in tenants
         }
     
-    def _get_limiter_reason(self) -> str:
+    def _get_limiter_reason(self, now=None) -> str:
         """Get human-readable reason for limiter blocking retry"""
         limiter_type = type(self.limiter).__name__
         
@@ -109,9 +110,13 @@ class LoadLimiterMiddleware(Middleware):
             state = self.limiter.get_state()
             return f"{limiter_type}_state_{state.name}"
         
-        # Check retry budget
+        # Check retry budget. A budget's can_retry() takes no argument and a rate
+        # limiter's takes the time: calling the latter without it raised a
+        # TypeError the first time a rate limiter refused a retry, and ended the run.
         if hasattr(self.limiter, 'can_retry'):
-            if not self.limiter.can_retry():
+            can_retry = self.limiter.can_retry
+            takes_now = 'now' in inspect.signature(can_retry).parameters
+            if not (can_retry(now) if takes_now else can_retry()):
                 return f"{limiter_type}_budget_exhausted"
         
         return f"{limiter_type}_blocked"
