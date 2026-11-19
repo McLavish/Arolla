@@ -46,7 +46,10 @@ class LeakyRateLimiterPolicy(LoadLimiter):
     def next_delay(self, context: RetryContext) -> Tuple[bool, TimeDuration]:
         if context.now is None:
             raise ValueError("LeakyRateLimiterPolicy requires context.now to be set")
-        if context.attempt > self.max_attempts:
+        # `attempt` is the number of attempts made so far, and `max_attempts`
+        # counts all of them, as in the backoff policies: after the last allowed
+        # attempt there is no retry. `>` granted one attempt too many.
+        if context.attempt >= self.max_attempts:
             return False, 0
         return True, self.add_request(context.now)
 
