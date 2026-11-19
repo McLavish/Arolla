@@ -125,8 +125,14 @@ def build_clients_and_workloads(
     shared_budgets: Dict[str, RetryBudgetPolicy] = {}
 
     if config.clients:
+        # Rank of each entry among the entries that target the same service: with
+        # the replica index it selects the client's arrival stream (arrival_seed).
+        entries_on_service: Dict[str, int] = {}
         for client_cfg_yaml in config.clients:
             replicas = getattr(client_cfg_yaml, "replicas", 1)
+            target_name = client_cfg_yaml.target_service or entry_service.cfg.name
+            position = entries_on_service.get(target_name, 0)
+            entries_on_service[target_name] = position + 1
             for i in range(replicas):
                 client_name = client_cfg_yaml.name if replicas <= 1 else f"{client_cfg_yaml.name}.{i}"
                 client_seed = get_stable_seed(config.seed, client_name)
@@ -155,7 +161,9 @@ def build_clients_and_workloads(
 
                 clients.append(ClientRuntime(cfg=c_cfg, service=target_svc))
 
-                wl = runtime_builders.build_workload(client_cfg_yaml.workload)
+                wl = runtime_builders.build_workload(
+                    client_cfg_yaml.workload, position=position, replica=i
+                )
                 wl.register_fault_events(fault_tracker)
                 workloads.append(wl)
     else:

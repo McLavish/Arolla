@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import random
 from typing import List, Optional
 
@@ -58,10 +59,34 @@ def build_service(
     ).bind(seed=seed, record_events=True)
 
 
-def build_workload(cfg: WorkloadConfig) -> Workload:
+def arrival_seed(rng_seed: Optional[int], position: int = 0, replica: int = 0) -> Optional[int]:
+    """Seed of one client's arrival stream.
+
+    Every client used to draw its arrivals from `rng_seed` alone, so all the
+    replicas of a client entry, and all entries sharing one workload block,
+    arrived at exactly the same instants. The stream now also depends on where
+    the client sits:
+
+    * `position`: the rank of its entry among the entries that target the same
+      service, in file order;
+    * `replica`: its index among the entry's replicas.
+
+    Entries on DIFFERENT services still get the same streams, so policy arms
+    laid out as parallel service stacks stay paired, request for request. The
+    first client of a service keeps `rng_seed` itself, so a scenario with one
+    client per service is unchanged.
+    """
+    if position == 0 and replica == 0:
+        return rng_seed
+    base = rng_seed if rng_seed is not None else 0
+    digest = hashlib.md5(f"{base}:arrivals:{position}:{replica}".encode("utf-8")).hexdigest()
+    return int(digest, 16) & 0xFFFFFFFF
+
+
+def build_workload(cfg: WorkloadConfig, position: int = 0, replica: int = 0) -> Workload:
     return Workload(
         base_rps=cfg.base_rps,
         duration_s=cfg.duration_s,
         load_spikes=build_load_spikes(cfg.load_spikes),
-        rng_seed=cfg.rng_seed,
+        rng_seed=arrival_seed(cfg.rng_seed, position, replica),
     )
