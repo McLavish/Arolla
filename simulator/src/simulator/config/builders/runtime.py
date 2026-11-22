@@ -60,25 +60,12 @@ def build_service(
 
 
 def arrival_seed(rng_seed: Optional[int], position: int = 0, replica: int = 0) -> Optional[int]:
-    """Seed for the arrival times of one client.
+    """Seed for the arrival times of a client.
+    To avoid all clients generating the same arrival times, we derive a deterministic seed from the base 
+    `rng_seed` using the `position` and `replica` of the client.
 
-    `rng_seed` is the seed in the client's workload block. Two numbers tell
-    apart the clients that share it:
-
-    * `position`: which client entry it comes from, counting only the entries
-      that target the same service, in file order (0, 1, 2, ...);
-    * `replica`: which copy it is among that entry's `replicas` (0, 1, 2, ...).
-
-    Each (position, replica) gets its own seed. Seeding them all with
-    `rng_seed` made every client arrive at exactly the same instants, so twenty
-    replicas behaved like one client sending twenty requests at a time.
-
-    Two cases deliberately get the same stream as before:
-
-    * client (0, 0) of a service keeps `rng_seed` itself, so a scenario with
-      one client per service gives the same results as before;
-    * the seed does not depend on which service the client targets, so policy
-      arms laid out as parallel service stacks see identical traffic.
+    * `position`: the position of the client among the clients that target the same service (0, 1, 2, ...);
+    * `replica`: the index of the client among its `replicas` (0, 1, 2, ...).
     """
     if position == 0 and replica == 0:
         return rng_seed
