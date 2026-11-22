@@ -97,13 +97,22 @@ def build_timeout_policy(cfg: Optional[TimeoutConfig]) -> Optional[Timeout]:
     return StaticTimeout(global_timeout=global_timeout, attempt_timeout=attempt_timeout)
 
 
+def _count_reaching(rate: float, window: int) -> int:
+    """Returns how many results in the last `window` are needed to reach the desired `rate`.
+
+    Example: rate 0.15, window 10 -> 2 (1 of 10 is only 10 %, 2 of 10 is 20 %).
+    Returns the first count with `count / window >= rate`.
+    """
+    return next(count for count in range(window + 1) if count / window >= rate)
+
+
 def build_circuit_breaker(cfg: Optional[CircuitBreakerConfig]) -> Optional[LoadLimiter]:
     if cfg is None:
         return None
 
     if cfg.type == CircuitBreakerType.COUNT_BASED:
-        failure_count = int(cfg.failure_threshold * cfg.failure_window_size)
-        success_count = int(cfg.success_threshold * cfg.success_window_size)
+        failure_count = _count_reaching(cfg.failure_threshold, cfg.failure_window_size)
+        success_count = _count_reaching(cfg.success_threshold, cfg.success_window_size)
         return CountBasedCircuitBreakerPolicy(
             failure_threshold_ratio=(failure_count, cfg.failure_window_size),
             success_threshold_ratio=(success_count, cfg.success_window_size),
@@ -111,10 +120,9 @@ def build_circuit_breaker(cfg: Optional[CircuitBreakerConfig]) -> Optional[LoadL
         )
 
     if cfg.type == CircuitBreakerType.TIME_BASED:
-        success_thresh = cfg.success_threshold if cfg.success_threshold is not None else (1.0 - cfg.failure_threshold)
         return LimiterTimeBasedCircuitBreakerPolicy(
             failure_threshold_rate=cfg.failure_threshold,
-            success_threshold_rate=success_thresh,
+            success_threshold_rate=cfg.success_threshold,
             min_requests=cfg.min_requests,
             window_duration=ms_to_ns(cfg.window_duration_ms),
             half_open_delay=ms_to_ns(cfg.half_open_delay_ms),

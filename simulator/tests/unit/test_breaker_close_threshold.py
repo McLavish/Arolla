@@ -5,8 +5,9 @@ The close test was written on the failure side: `failure_rate < 1 - success_thre
 At a threshold of 1.0 that is `failure_rate < 0`, which nothing satisfies, so a
 breaker told to close only when every probe succeeds never closed again. And
 since `1 - 0.8` is not `0.2` in binary floating point, 4 successes out of 5 at
-0.8 were refused as well. The default threshold is `1 - failure_threshold`, so
-the shipped breakers (failure_threshold 0.1) were affected at exactly 10 %.
+0.8 were refused as well.
+Without a success threshold, it closes once the failure rate is back below the
+rate that caused it to open.
 """
 
 import pytest
@@ -54,16 +55,19 @@ def test_stays_open_one_success_short_of_the_threshold():
     assert after(opened(0.8), [True, True, True, False, False]) == CBState.OPEN
 
 
-@pytest.mark.parametrize("failure_threshold", [0.01, 0.05, 0.1, 0.2, 0.5])
-def test_the_default_threshold_closes_at_the_rate_that_does_not_open(failure_threshold):
-    """Built as the YAML builds it, success_threshold = 1 - failure_threshold, for the
-    thresholds the shipped sweeps use. A window whose failure rate is exactly the
-    failure threshold does not trip a closed breaker, so it closes an open one.
-    (The old test closed it for 0.01 and 0.05 and not for 0.1, 0.2 and 0.5: whichever
-    way `1 - (1 - x)` happened to round.)"""
+@pytest.mark.parametrize("percent", range(1, 100))
+def test_with_no_success_threshold_it_closes_below_the_failure_threshold(percent):
+    """With no `success_threshold`, the breaker closes once the failure rate drops
+    below `failure_threshold`.
+
+    Example with a threshold of 10 %: the open breaker receives 100 results, 10 of
+    them failures. That is exactly 10 %, enough to open a breaker, so it remains open.
+    With one more success, it becomes 10 out of 101 (9.9 %), and it breaker closes.
+    """
+    failure_threshold = percent / 100
     breaker = LimiterTimeBasedCircuitBreakerPolicy(
         failure_threshold_rate=failure_threshold,
-        success_threshold_rate=1.0 - failure_threshold,
+        success_threshold_rate=None,
         min_requests=20,
         window_duration=s_to_ns(1),
         half_open_delay=ms_to_ns(500),
@@ -72,11 +76,9 @@ def test_the_default_threshold_closes_at_the_rate_that_does_not_open(failure_thr
         breaker.add_result(False, i * ms_to_ns(1))
     assert breaker.get_state() == CBState.OPEN
 
-    failures = round(failure_threshold * 100)
-    results = [False] * failures + [True] * (100 - failures)
-    # One result short, the success rate is still below the threshold.
-    assert after(breaker, results[:-1]) == CBState.OPEN
-    breaker.add_result(True, s_to_ns(5) + ms_to_ns(99))
+    results = [False] * percent + [True] * (100 - percent)
+    assert after(breaker, results) == CBState.OPEN
+    breaker.add_result(True, s_to_ns(5) + ms_to_ns(100))
     assert breaker.get_state() == CBState.CLOSED
 
 

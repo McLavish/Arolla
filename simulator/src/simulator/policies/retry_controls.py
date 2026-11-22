@@ -274,15 +274,10 @@ class CountBasedCircuitBreakerPolicy(LoadLimiter):
                 if failures >= self.failure_threshold_ratio[0]:
                     self._state = CBState.OPEN
                     self._open_window.clear()
-                    if now is not None:
-                        self._opened_at = now
+                    self._opened_at = now
         elif self._state == CBState.OPEN:
             self._open_window.append(success)
-            if (
-                self._opened_at is None
-                or self.half_open_delay == 0
-                or now - self._opened_at >= self.half_open_delay
-            ):
+            if now - self._opened_at >= self.half_open_delay:
                 if len(self._open_window) == self._open_window.maxlen:
                     successes = sum(1 for ok in self._open_window if ok)
                     if successes >= self.success_threshold_ratio[0]:
@@ -299,7 +294,7 @@ class CountBasedCircuitBreakerPolicy(LoadLimiter):
 @dataclass
 class LimiterTimeBasedCircuitBreakerPolicy(LoadLimiter):
     failure_threshold_rate: float
-    success_threshold_rate: float
+    success_threshold_rate: Optional[float]
     min_requests: int
     window_duration: TimeDuration
     half_open_delay: TimeDuration
@@ -324,27 +319,20 @@ class LimiterTimeBasedCircuitBreakerPolicy(LoadLimiter):
 
         total = len(self._window)
         failures = sum(1 for _, ok in self._window if not ok)
-        rate = failures / total if total > 0 else 0.0
+        rate = failures / total
 
         if self._state == CBState.CLOSED:
-            if total >= self.min_requests and rate > self.failure_threshold_rate:
+            if total >= self.min_requests and rate >= self.failure_threshold_rate:
                 self._state = CBState.OPEN
                 self._opened_at = now
-        elif self._state == CBState.OPEN:
-            if (
-                self._opened_at is None
-                or self.half_open_delay == 0
-                or now - self._opened_at >= self.half_open_delay
-            ):
-                # Close when the SUCCESS rate reaches the threshold, as the count-based
-                # breaker does. The test was written on the failure side,
-                # `rate < 1 - success_threshold_rate`: that can never hold at a
-                # threshold of 1.0, and 1 - 0.8 not being 0.2 in floating point, it
-                # also refused 4 successes out of 5 at 0.8.
-                success_rate = (total - failures) / total if total > 0 else 0.0
-                if total >= self.min_requests and success_rate >= self.success_threshold_rate:
-                    self._state = CBState.CLOSED
-                    self._opened_at = None
+        elif self._state == CBState.OPEN and now - self._opened_at >= self.half_open_delay:
+            if self.success_threshold_rate is None:
+                healthy = rate < self.failure_threshold_rate
+            else:
+                healthy = (total - failures) / total >= self.success_threshold_rate
+            if total >= self.min_requests and healthy:
+                self._state = CBState.CLOSED
+                self._opened_at = None
 
     def next_delay(self, context: RetryContext) -> Tuple[bool, TimeDuration]:
         if self._state == CBState.OPEN:
