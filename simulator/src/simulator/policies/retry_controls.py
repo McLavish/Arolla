@@ -29,9 +29,6 @@ class RetryBudgetPolicy(RetryPolicy):
 
     def __post_init__(self):
         self.retry_cost = 100
-        # The fraction of a retry one success earns. It was truncated to whole
-        # hundredths (`int(...)`), so a ratio of 0.0867 ran as 0.08 and any
-        # ratio below 0.01 never earned anything.
         self.success_reward = self.budget_ratio * self.retry_cost
         self._max_tokens = self.retry_cost * self.max_retries
         self._tokens = self._max_tokens
@@ -374,7 +371,6 @@ class LimiterRetryBudgetPolicy(LoadLimiter):
 
     def __post_init__(self):
         self._retry_cost = 100
-        # Not truncated to whole hundredths of a retry (see RetryBudgetPolicy).
         self._success_award = self._retry_cost * self.budget_ratio
         self._max_tokens = self._retry_cost * self.max_retries
         self._tokens = self._max_tokens

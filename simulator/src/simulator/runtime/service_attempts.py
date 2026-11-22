@@ -44,8 +44,6 @@ class _ServiceAttemptMixin:
                         sim.timestep,
                         None,
                     )
-                    # The request ends here; a caller that waits for the end of
-                    # the request (a dependency call) must hear of it.
                     on_root_done()
                     return
                 self._admission_admitted[tenant] += 1
