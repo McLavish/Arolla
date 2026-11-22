@@ -120,8 +120,6 @@ def build_clients_and_workloads(
     shared_budgets: Dict[str, RetryBudgetPolicy] = {}
 
     if config.clients:
-        # Rank of each entry among the entries that target the same service: with
-        # the replica index it selects the client's arrival stream (arrival_seed).
         entries_on_service: Dict[str, int] = {}
         for client_cfg_yaml in config.clients:
             replicas = getattr(client_cfg_yaml, "replicas", 1)
