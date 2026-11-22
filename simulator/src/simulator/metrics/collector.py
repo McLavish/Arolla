@@ -138,10 +138,6 @@ class Metrics:
             b_end = bin_of(a.interval.end)
             if 0 <= b_end < nbuckets:
                 completed_counts[b_end] += 1
-                # A client that times an attempt out locally never sees the queue
-                # and records the placeholder -1 (ClientRuntime._on_local_timeout).
-                # That is not an observation: averaging it in pulled the queue
-                # metric down exactly when the queue was longest.
                 queue_size = getattr(a, "queue_size_at_end", None)
                 if queue_size is not None and queue_size >= 0:
                     queue_sizes_by_bucket[b_end].append(int(queue_size))

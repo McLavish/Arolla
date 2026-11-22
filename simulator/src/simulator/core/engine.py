@@ -31,8 +31,6 @@ class Simulator:
     def schedule(self, at: TimePoint, fn: Callable[[], None]):
         at = int(at)
         if at < self.timestep:
-            # Running it would set the clock BACK to `at`: every interval that
-            # is open at that moment would get an end before its begin.
             raise ValueError(
                 f"cannot schedule an event at {at} ns: simulator time is already "
                 f"{self.timestep} ns (negative delay or misconfigured deadline?)"
@@ -55,5 +53,4 @@ class Simulator:
             self.timestep = ev.at
             ev.action()
         if until is not None:
-            # max: an event may have run the simulator further itself.
             self.timestep = max(self.timestep, int(until))

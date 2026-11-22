@@ -270,6 +270,9 @@ class CountBasedCircuitBreakerPolicy(LoadLimiter):
     def get_state(self) -> CBState:
         return self._state
 
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_state_{self._state.name}"
+
     def add_result(self, success: bool, now: TimePoint, **kwargs) -> None:
         if self._state == CBState.CLOSED:
             self._closed_window.append(success)
@@ -318,6 +321,9 @@ class LimiterTimeBasedCircuitBreakerPolicy(LoadLimiter):
 
     def get_state(self) -> CBState:
         return self._state
+
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_state_{self._state.name}"
 
     def add_result(self, success: bool, now: TimePoint, **kwargs) -> None:
         self._evict_old(now)
@@ -388,6 +394,9 @@ class LimiterRetryBudgetPolicy(LoadLimiter):
             self._tokens -= self._retry_cost
             return True, 0
         return False, 0
+
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_budget_exhausted"
 
     def applies_pre_queue_admission(self, is_retry: bool) -> bool:
         return is_retry

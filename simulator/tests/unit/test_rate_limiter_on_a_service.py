@@ -58,18 +58,35 @@ def test_a_refused_retry_does_not_end_the_run(limiter, retries_allowed):
 
 
 def test_the_reason_names_the_limiter():
-    from simulator.middleware.load_limiter import LoadLimiterMiddleware
-    from simulator.policies.load_limiter import BurstyRateLimiterPolicy
+    from simulator.policies.load_limiter import BurstyRateLimiterPolicy, LeakyRateLimiterPolicy
     from simulator.policies.retry import RetryContext
-    from simulator.policies.retry_controls import LimiterRetryBudgetPolicy
+    from simulator.policies.retry_controls import (
+        CountBasedCircuitBreakerPolicy,
+        LimiterRetryBudgetPolicy,
+        RetryCircuitBreakerPolicy,
+    )
 
     bursty = BurstyRateLimiterPolicy(max_requests=1, refill_rate=1, period=s_to_ns(1))
     bursty.next_delay(RetryContext(attempt=2, now=0))            # takes the one token
-    assert LoadLimiterMiddleware(bursty)._get_limiter_reason(0) == (
-        "BurstyRateLimiterPolicy_budget_exhausted"
-    )
+    assert not bursty.next_delay(RetryContext(attempt=2, now=0))[0]
+    assert bursty.refusal_reason() == "BurstyRateLimiterPolicy_budget_exhausted"
+
     budget = LimiterRetryBudgetPolicy(budget_ratio=0.1, max_retries=1)
     budget.next_delay(RetryContext(attempt=2, now=0))
-    assert LoadLimiterMiddleware(budget)._get_limiter_reason(0) == (
-        "LimiterRetryBudgetPolicy_budget_exhausted"
+    assert not budget.next_delay(RetryContext(attempt=2, now=0))[0]
+    assert budget.refusal_reason() == "LimiterRetryBudgetPolicy_budget_exhausted"
+
+    breaker = CountBasedCircuitBreakerPolicy(
+        failure_threshold_ratio=(1, 1), success_threshold_ratio=(1, 1), half_open_delay=s_to_ns(60),
     )
+    breaker.add_result(False, 0)                                 # opens it
+    assert breaker.refusal_reason() == "CountBasedCircuitBreakerPolicy_state_OPEN"
+
+    # Limiters with nothing more specific to say, including the retry policy
+    # that a `retry_circuit_breaker` service uses as its limiter.
+    leaky = LeakyRateLimiterPolicy(max_requests=1, max_attempts=1, period=s_to_ns(1))
+    assert leaky.refusal_reason() == "LeakyRateLimiterPolicy_blocked"
+    retry_breaker = RetryCircuitBreakerPolicy(
+        inner=None, failure_rate_threshold=0.5, window_duration=s_to_ns(1), min_window_size=1,
+    )
+    assert retry_breaker.refusal_reason() == "RetryCircuitBreakerPolicy_blocked"

@@ -23,6 +23,9 @@ class LoadLimiter(ABC):
     def applies_pre_queue_admission(self, is_retry: bool) -> bool:
         return False
 
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_blocked"
+
 
 class NoLoadLimiter(LoadLimiter):
     def next_delay(self, context: RetryContext) -> Tuple[bool, TimeDuration]:
@@ -91,6 +94,9 @@ class BurstyRateLimiterPolicy(LoadLimiter):
             return True, 0
         return False, 0
 
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_budget_exhausted"
+
 
 @dataclass
 class FixedWindowBurstyLimiterPolicy(LoadLimiter):
@@ -126,3 +132,6 @@ class FixedWindowBurstyLimiterPolicy(LoadLimiter):
             self._tokens -= 1
             return True, 0
         return False, 0
+
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_budget_exhausted"
