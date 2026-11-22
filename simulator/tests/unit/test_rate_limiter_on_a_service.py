@@ -57,6 +57,16 @@ def test_a_refused_retry_does_not_end_the_run(limiter, retries_allowed):
     assert service.in_flight == 0
 
 
+@pytest.mark.parametrize("kind", ["bursty", "fixed_window", "leaky"])
+def test_a_zero_period_is_rejected_when_the_scenario_loads(kind):
+    # It used to load, and then meant something different for each limiter: the
+    # bursty one never refilled, the leaky one let everything through, and the
+    # fixed-window one divided by zero on the first retry.
+    limiter = f"{{type: {kind}, max_requests: 5, period_ms: 0, refill_rate: 2}}"
+    with pytest.raises(ValueError, match="period_ms"):
+        ConfigLoader.load_from_string(SCENARIO.format(limiter=limiter))
+
+
 def test_the_reason_names_the_limiter():
     from simulator.policies.load_limiter import BurstyRateLimiterPolicy, LeakyRateLimiterPolicy
     from simulator.policies.retry import RetryContext

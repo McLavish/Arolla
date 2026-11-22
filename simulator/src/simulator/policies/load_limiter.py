@@ -49,9 +49,6 @@ class LeakyRateLimiterPolicy(LoadLimiter):
     def next_delay(self, context: RetryContext) -> Tuple[bool, TimeDuration]:
         if context.now is None:
             raise ValueError("LeakyRateLimiterPolicy requires context.now to be set")
-        # `attempt` is the number of attempts made so far, and `max_attempts`
-        # counts all of them, as in the backoff policies: after the last allowed
-        # attempt there is no retry. `>` granted one attempt too many.
         if context.attempt >= self.max_attempts:
             return False, 0
         return True, self.add_request(context.now)
@@ -74,10 +71,7 @@ class BurstyRateLimiterPolicy(LoadLimiter):
             self._last_refill = now
             return
         time_elapsed = now - self._last_refill
-        if time_elapsed > 0 and self.period > 0:
-            # Fractions of a token are kept. They used to be truncated on every
-            # call while `_last_refill` still moved forward, so a limiter asked
-            # more often than once per `period / refill_rate` never refilled.
+        if time_elapsed > 0:
             tokens_to_add = (time_elapsed * self.refill_rate) / self.period
             self._tokens = min(float(self.max_requests), self._tokens + tokens_to_add)
         self._last_refill = now

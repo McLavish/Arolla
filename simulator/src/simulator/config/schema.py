@@ -105,7 +105,7 @@ class RateLimiterConfig(BaseModel):
     """Configuration for rate limiter"""
     type: RateLimiterType
     max_requests: int = Field(ge=1, description="Maximum requests")
-    period_ms: float = Field(ge=0, description="Period in ms")
+    period_ms: float = Field(gt=0, description="Period in ms")
     max_attempts: Optional[int] = Field(default=None, ge=1, description="Max attempts (for leaky)")
     refill_rate: Optional[int] = Field(default=None, ge=1, description="Refill rate (for bursty)")
 
