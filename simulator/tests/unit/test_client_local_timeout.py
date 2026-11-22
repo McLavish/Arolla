@@ -146,18 +146,33 @@ class TestClientWithoutAPolicy:
         assert [(a.success, a.drop_reason) for a in root.attempts] == [(False, DropReason.DEADLINE)]
         assert root.done
 
-    def test_the_services_own_retries_still_count(self):
+    def test_a_success_on_the_services_retry_after_the_timeout_is_not_counted(self):
         """
-        The service retries by itself: its first attempt (timed out by the
-        client at 15 ms) fails at 20 ms, its second succeeds at 40 ms. The late
-        answer of the first attempt is dropped; the retry is a new attempt.
+        The service retries by itself: its first attempt fails at 20 ms and the
+        second succeeds at 40 ms. The client timed out at 15 ms, so the request
+        is a failure. The service still makes both attempts because we haven't
+        implemented cancellation propagation yet.
         """
         svc = make_service(median_ms=20, fail_until_ms=25, max_attempts=2)
         client = make_client(svc)
         run_one(client)
 
         (root,) = client.roots
-        assert [(a.success, a.drop_reason) for a in root.attempts] == [
-            (False, DropReason.DEADLINE), (True, DropReason.NONE),
-        ]
+        assert [(a.success, a.drop_reason) for a in root.attempts] == [(False, DropReason.DEADLINE)]
         assert len(svc.events) == 2
+
+    def test_the_timeout_also_covers_the_services_retry(self):
+        """
+        The service first attempt fails at 10 ms, and the retry would
+        succeed at 20 ms. The client 15 ms timeout elapses during the retry and
+        ends the request.
+        """
+        svc = make_service(median_ms=10, fail_until_ms=12, max_attempts=2)
+        client = make_client(svc)
+        run_one(client)
+
+        (root,) = client.roots
+        assert [(a.success, a.drop_reason) for a in root.attempts] == [
+            (False, DropReason.SERVER_FAILURE), (False, DropReason.DEADLINE),
+        ]
+        assert at_ms(root.attempts[1].interval.end, 15)
