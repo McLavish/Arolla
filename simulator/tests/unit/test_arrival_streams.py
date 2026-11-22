@@ -95,7 +95,7 @@ class TestArrivalStreams:
         workload = build_workload(cfg)
         assert [workload._rng.random() for _ in range(5)] == [expected.random() for _ in range(5)]
 
-    def test_the_seed_is_a_stable_function_of_where_the_client_sits(self):
+    def test_each_position_and_replica_gets_its_own_stable_seed(self):
         seeds = {
             (position, replica): arrival_seed(7, position, replica)
             for position in range(4)

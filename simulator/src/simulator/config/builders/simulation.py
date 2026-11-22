@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import random
 from collections import deque
 from typing import Dict, List
@@ -18,11 +17,7 @@ from simulator.core.engine import Simulator
 
 from . import policies as policy_builders
 from . import runtime as runtime_builders
-
-
-def get_stable_seed(base_seed: int, name: str) -> int:
-    h = hashlib.md5(f"{base_seed}:{name}".encode("utf-8")).hexdigest()
-    return int(h, 16) & 0xFFFFFFFF
+from .seeds import get_stable_seed
 
 
 def resolve_service_topology(

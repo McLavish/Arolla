@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import random
 from typing import List, Optional
 
@@ -14,6 +13,7 @@ from simulator.utils.time import ms_to_ns
 
 from .faults import build_latency_injections, build_partial_failures, build_load_spikes
 from .policies import build_retry_policy, build_timeout_policy, build_load_limiter
+from .seeds import get_stable_seed
 
 
 def build_service(
@@ -60,27 +60,30 @@ def build_service(
 
 
 def arrival_seed(rng_seed: Optional[int], position: int = 0, replica: int = 0) -> Optional[int]:
-    """Seed of one client's arrival stream.
+    """Seed for the arrival times of one client.
 
-    Every client used to draw its arrivals from `rng_seed` alone, so all the
-    replicas of a client entry, and all entries sharing one workload block,
-    arrived at exactly the same instants. The stream now also depends on where
-    the client sits:
+    `rng_seed` is the seed in the client's workload block. Two numbers tell
+    apart the clients that share it:
 
-    * `position`: the rank of its entry among the entries that target the same
-      service, in file order;
-    * `replica`: its index among the entry's replicas.
+    * `position`: which client entry it comes from, counting only the entries
+      that target the same service, in file order (0, 1, 2, ...);
+    * `replica`: which copy it is among that entry's `replicas` (0, 1, 2, ...).
 
-    Entries on DIFFERENT services still get the same streams, so policy arms
-    laid out as parallel service stacks stay paired, request for request. The
-    first client of a service keeps `rng_seed` itself, so a scenario with one
-    client per service is unchanged.
+    Each (position, replica) gets its own seed. Seeding them all with
+    `rng_seed` made every client arrive at exactly the same instants, so twenty
+    replicas behaved like one client sending twenty requests at a time.
+
+    Two cases deliberately get the same stream as before:
+
+    * client (0, 0) of a service keeps `rng_seed` itself, so a scenario with
+      one client per service gives the same results as before;
+    * the seed does not depend on which service the client targets, so policy
+      arms laid out as parallel service stacks see identical traffic.
     """
     if position == 0 and replica == 0:
         return rng_seed
     base = rng_seed if rng_seed is not None else 0
-    digest = hashlib.md5(f"{base}:arrivals:{position}:{replica}".encode("utf-8")).hexdigest()
-    return int(digest, 16) & 0xFFFFFFFF
+    return get_stable_seed(base, f"arrivals:{position}:{replica}")
 
 
 def build_workload(cfg: WorkloadConfig, position: int = 0, replica: int = 0) -> Workload:
