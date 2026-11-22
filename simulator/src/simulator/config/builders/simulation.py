@@ -6,7 +6,6 @@ import random
 from collections import deque
 from typing import Dict, List
 
-from simulator.config.compat import get_effective_dependencies
 from simulator.config.schema import ExperimentConfig, ServiceConfigYAML
 from simulator.faults.events import FaultEventsTracker
 from simulator.policies.retry_controls import RetryBudgetPolicy
@@ -24,21 +23,14 @@ def resolve_service_topology(
     config: ExperimentConfig,
 ) -> tuple[Dict[str, ServiceConfigYAML], List[str]]:
     """
-    Validate dependencies and return services in topological order (leaf -> root).
+    Return services in topological order (leaf -> root), rejecting cycles.
     """
     svc_map: Dict[str, ServiceConfigYAML] = {s.name: s for s in config.services}
     dep_names: Dict[str, List[str]] = {}
     in_degree: Dict[str, int] = {s.name: 0 for s in config.services}
 
     for svc_cfg in config.services:
-        deps = get_effective_dependencies(svc_cfg)
-        names = [d.service for d in deps]
-        for dep_name in names:
-            if dep_name not in svc_map:
-                raise ValueError(
-                    f"Dependency '{dep_name}' not found for service '{svc_cfg.name}'. "
-                    f"Available services: {list(svc_map.keys())}"
-                )
+        names = [d.service for d in svc_cfg.dependencies]
         dep_names[svc_cfg.name] = names
         in_degree[svc_cfg.name] = len(names)
 
@@ -71,20 +63,13 @@ def build_service_graph(
 
     for name in topo_order:
         svc_cfg = svc_map[name]
-        effective_deps = get_effective_dependencies(svc_cfg)
         svc_seed = get_stable_seed(config.seed, name)
 
-        if effective_deps:
+        if svc_cfg.dependencies:
             dep_runtimes: List[ServiceRuntime] = []
             dep_optionality: List[bool] = []
-            for dep_cfg in effective_deps:
-                dep_rt = services.get(dep_cfg.service)
-                if dep_rt is None:
-                    raise ValueError(
-                        f"Dependency '{dep_cfg.service}' not found for service '{name}'. "
-                        f"Available: {list(services.keys())}"
-                    )
-                dep_runtimes.append(dep_rt)
+            for dep_cfg in svc_cfg.dependencies:
+                dep_runtimes.append(services[dep_cfg.service])
                 dep_optionality.append(dep_cfg.optional)
 
             call_pattern = (
@@ -144,15 +129,7 @@ def build_clients_and_workloads(
                     e2e_retry_budget=getattr(client_cfg_yaml, 'e2e_retry_budget', None),
                 )
 
-                target_svc = entry_service
-                if client_cfg_yaml.target_service:
-                    target_svc = services.get(client_cfg_yaml.target_service)
-                    if not target_svc:
-                        raise ValueError(
-                            f"Target service {client_cfg_yaml.target_service} not found for client {client_cfg_yaml.name}"
-                        )
-
-                clients.append(ClientRuntime(cfg=c_cfg, service=target_svc))
+                clients.append(ClientRuntime(cfg=c_cfg, service=services[target_name]))
 
                 wl = runtime_builders.build_workload(
                     client_cfg_yaml.workload, position=position, replica=i
@@ -160,9 +137,6 @@ def build_clients_and_workloads(
                 wl.register_fault_events(fault_tracker)
                 workloads.append(wl)
     else:
-        if not config.workload:
-            raise ValueError("No workload configuration found")
-
         clients.append(ClientRuntime(cfg=ClientConfig(name="client"), service=entry_service))
         wl = runtime_builders.build_workload(config.workload)
         wl.register_fault_events(fault_tracker)

@@ -102,8 +102,6 @@ def build_circuit_breaker(cfg: Optional[CircuitBreakerConfig]) -> Optional[LoadL
         return None
 
     if cfg.type == CircuitBreakerType.COUNT_BASED:
-        if cfg.success_threshold is None:
-            raise ValueError("success_threshold is required for count_based circuit breaker")
         failure_count = int(cfg.failure_threshold * cfg.failure_window_size)
         success_count = int(cfg.success_threshold * cfg.success_window_size)
         return CountBasedCircuitBreakerPolicy(
@@ -129,11 +127,8 @@ def build_circuit_breaker(cfg: Optional[CircuitBreakerConfig]) -> Optional[LoadL
             inner=None,
             failure_rate_threshold=cfg.failure_threshold,
             window_duration=ms_to_ns(cfg.window_duration_ms),
-            min_requests=cfg.min_requests if cfg.min_requests else 100,
-            wait_duration_in_open_state=(
-                ms_to_ns(cfg.half_open_delay_ms) if cfg.half_open_delay_ms else 0
-            ),
-            min_window_size=cfg.min_requests if cfg.min_requests else 100,
+            wait_duration_in_open_state=ms_to_ns(cfg.half_open_delay_ms),
+            min_window_size=cfg.min_requests,
         )
 
     raise ValueError(f"Unknown circuit breaker type: {cfg.type}")
@@ -258,17 +253,17 @@ def build_client_retry_policy(
             policy = RetryCircuitBreakerPolicy(
                 inner=policy,
                 failure_rate_threshold=cb_cfg.failure_threshold,
-                window_duration=ms_to_ns(cb_cfg.window_duration_ms or 5000),
-                min_window_size=cb_cfg.min_requests or 100,
-                wait_duration_in_open_state=ms_to_ns(cb_cfg.half_open_delay_ms or 0),
+                window_duration=ms_to_ns(cb_cfg.window_duration_ms),
+                min_window_size=cb_cfg.min_requests,
+                wait_duration_in_open_state=ms_to_ns(cb_cfg.half_open_delay_ms),
             )
         elif cb_cfg.type == CircuitBreakerType.TIME_BASED:
             policy = TimeBasedCircuitBreakerPolicy(
                 inner=policy,
                 failure_rate_threshold=cb_cfg.failure_threshold,
-                window_duration=ms_to_ns(cb_cfg.window_duration_ms or 5000),
-                min_window_size=cb_cfg.min_requests or 100,
-                wait_duration_in_open_state=ms_to_ns(cb_cfg.half_open_delay_ms or 1000),
+                window_duration=ms_to_ns(cb_cfg.window_duration_ms),
+                min_window_size=cb_cfg.min_requests,
+                wait_duration_in_open_state=ms_to_ns(cb_cfg.half_open_delay_ms),
             )
 
     if client_cfg_yaml.retry_budget is not None:
@@ -283,6 +278,7 @@ def build_client_retry_policy(
             new_budget = RetryBudgetPolicy(
                 inner=policy,
                 budget_ratio=budget_cfg.budget_ratio,
+                min_retries_per_sec=budget_cfg.min_retries_per_sec,
                 max_retries=budget_cfg.max_retries,
             )
             shared_budgets[budget_cfg.shared_budget_id] = new_budget

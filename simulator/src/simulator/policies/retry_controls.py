@@ -257,12 +257,8 @@ class CountBasedCircuitBreakerPolicy(LoadLimiter):
     _opened_at: Optional[TimePoint] = None
 
     def __post_init__(self):
-        f, ftot = self.failure_threshold_ratio
-        s, stot = self.success_threshold_ratio
-        assert 0 <= f <= ftot and ftot > 0
-        assert 0 <= s <= stot and stot > 0
-        self._closed_window = deque(maxlen=ftot)
-        self._open_window = deque(maxlen=stot)
+        self._closed_window = deque(maxlen=self.failure_threshold_ratio[1])
+        self._open_window = deque(maxlen=self.success_threshold_ratio[1])
 
     def get_state(self) -> CBState:
         return self._state

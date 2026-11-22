@@ -11,7 +11,6 @@ from typing import List, Optional
 from simulator.config.schema import (
     AIMDGlobalRetryBudgetConfig,
     CircuitBreakerConfig,
-    DependencyConfig,
     ExperimentConfig,
     GlobalRetryBudgetConfig,
     LatencyInjectionConfig,
@@ -31,7 +30,6 @@ from simulator.faults.injection import LatencyInjection, PartialFailure, LoadSpi
 from simulator.runtime.service import ServiceRuntime
 from simulator.runtime.workload import Workload
 from simulator.core.engine import Simulator
-from simulator.config.compat import get_effective_dependencies
 from simulator.config.builders import policies as policy_builders
 from simulator.config.builders import faults as fault_builders
 from simulator.config.builders import runtime as runtime_builders
@@ -206,14 +204,6 @@ class ConfigLoader:
     # Complete Simulation Builder
     # ========================================================================
     
-    @staticmethod
-    def _get_effective_deps(svc_cfg: ServiceConfigYAML) -> List[DependencyConfig]:
-        """
-        Return effective dependency list, handling backward compat.
-        Converts legacy 'dependency: str' to 'dependencies: [{service: str}]'.
-        """
-        return get_effective_dependencies(svc_cfg)
-
     @staticmethod
     def build_simulation(config: ExperimentConfig):
         """
