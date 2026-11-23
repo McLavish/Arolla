@@ -188,6 +188,22 @@ workload:
       rps_multiplier: 2.0      # 2x traffic
 ```
 
+### Service Dependencies
+
+```yaml
+services:
+  - name: api
+    dependencies:
+      - service: db
+      - service: cache
+        optional: true                  # a failed optional call does not fail the request
+    dependency_call_pattern: parallel   # sequential (default) | parallel
+    dependency_join: fail_fast          # wait_all (default) | fail_fast
+```
+
+With `fail_fast` a service gives up at the first failed parallel call instead of
+waiting for every call to answer. The other calls keep running.
+
 ### Exact Arrivals
 
 By default every client sends its first request at t = 0, and a load spike only
