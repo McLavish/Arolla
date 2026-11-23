@@ -259,6 +259,10 @@ clients:
     propagate_deadline: true
 ```
 
+A service already passes its own attempt deadline on to its dependencies. With
+`propagate_deadline: false` on a service it does not: the service still gives up at
+its deadline, but its dependencies keep working on the call.
+
 ### Parameter Sweeps
 
 Use inline lists to sweep over parameter values:
