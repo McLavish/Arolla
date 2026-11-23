@@ -19,6 +19,27 @@ class _ServiceDependencyMixin:
         DropReason.DEADLINE: 3,
     }
 
+    def _call_dependencies(
+        self,
+        sim: Simulator,
+        on_all_done: Callable[[bool, DropReason], None],
+        deadline: Optional[TimePoint],
+        is_retry: bool,
+        retry_budget_remaining: Optional[list] = None,
+        tenant_id: Optional[str] = None,
+    ):
+        """Call the service's dependencies, all at once or one after another."""
+        if self.dependency_call_pattern == "parallel":
+            self._call_deps_parallel(
+                sim, self.dependencies, self.dependency_optionality, on_all_done, deadline, is_retry,
+                retry_budget_remaining=retry_budget_remaining, tenant_id=tenant_id,
+            )
+        else:
+            self._call_deps_sequential(
+                sim, self.dependencies, self.dependency_optionality, 0, on_all_done, deadline, is_retry,
+                retry_budget_remaining=retry_budget_remaining, tenant_id=tenant_id,
+            )
+
     def _call_deps_parallel(
         self,
         sim: Simulator,
