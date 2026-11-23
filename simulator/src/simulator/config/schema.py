@@ -310,6 +310,10 @@ class WorkloadConfig(BaseModel):
     duration_s: int = Field(gt=0, description="Simulation duration in seconds")
     load_spikes: List[LoadSpikeConfig] = Field(default_factory=list)
     rng_seed: Optional[int] = Field(default=None, description="RNG seed for reproducibility")
+    exact_arrivals: bool = Field(
+        default=False,
+        description="Exact Poisson arrivals: no request forced at t = 0, load spikes start and end on time",
+    )
 
 
 # ============================================================================
