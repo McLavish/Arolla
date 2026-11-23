@@ -6,8 +6,8 @@ enabling experiments to be defined declaratively rather than imperatively
 in Python scripts.
 """
 
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Literal, Union
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Annotated, List, Optional, Literal, Union
 from enum import Enum
 
 
@@ -64,6 +64,18 @@ class RetryConfig(BaseModel):
             raise ValueError(f"{info.field_name} is required for {policy_type} backoff")
         return v
 
+    @model_validator(mode="after")
+    def _initial_delay_within_max(self):
+        if (
+            self.initial_delay_ms is not None
+            and self.max_delay_ms is not None
+            and self.initial_delay_ms > self.max_delay_ms
+        ):
+            raise ValueError(
+                f"initial_delay_ms ({self.initial_delay_ms}) is larger than max_delay_ms ({self.max_delay_ms})"
+            )
+        return self
+
 
 class TimeoutConfig(BaseModel):
     """Configuration for timeout policy"""
@@ -81,8 +93,8 @@ class CircuitBreakerType(str, Enum):
 class CircuitBreakerConfig(BaseModel):
     """Configuration for circuit breaker"""
     type: CircuitBreakerType
-    failure_threshold: float = Field(description="Failure threshold (ratio or count)")
-    success_threshold: Optional[float] = Field(default=None, description="Success threshold (ratio or count)")
+    failure_threshold: float = Field(ge=0, le=1, description="Failure ratio that opens the breaker (0.0-1.0)")
+    success_threshold: Optional[float] = Field(default=None, ge=0, le=1, description="Success ratio that closes the breaker (0.0-1.0)")
     half_open_delay_ms: float = Field(ge=0, description="Delay before half-open state in ms")
     
     # Count-based specific
@@ -90,8 +102,20 @@ class CircuitBreakerConfig(BaseModel):
     success_window_size: Optional[int] = Field(default=None, ge=1, description="Window size for count-based")
     
     # Time-based specific
-    window_duration_ms: Optional[float] = Field(default=None, ge=0, description="Window duration for time-based")
-    min_requests: Optional[int] = Field(default=None, ge=1, description="Minimum requests for time-based")
+    window_duration_ms: Optional[float] = Field(default=None, ge=0, description="Window duration (time_based, retry_circuit_breaker)")
+    min_requests: Optional[int] = Field(default=None, ge=1, description="Minimum requests in the window (time_based, retry_circuit_breaker)")
+
+    @model_validator(mode="after")
+    def _check_fields_for_type(self):
+        required = {
+            CircuitBreakerType.COUNT_BASED: ("success_threshold", "failure_window_size", "success_window_size"),
+            CircuitBreakerType.TIME_BASED: ("window_duration_ms", "min_requests"),
+            CircuitBreakerType.RETRY_CIRCUIT_BREAKER: ("window_duration_ms", "min_requests"),
+        }[self.type]
+        missing = [name for name in required if getattr(self, name) is None]
+        if missing:
+            raise ValueError(f"a {self.type.value} circuit breaker needs: {', '.join(missing)}")
+        return self
 
 
 class RateLimiterType(str, Enum):
@@ -105,7 +129,7 @@ class RateLimiterConfig(BaseModel):
     """Configuration for rate limiter"""
     type: RateLimiterType
     max_requests: int = Field(ge=1, description="Maximum requests")
-    period_ms: float = Field(ge=0, description="Period in ms")
+    period_ms: float = Field(gt=0, description="Period in ms")
     max_attempts: Optional[int] = Field(default=None, ge=1, description="Max attempts (for leaky)")
     refill_rate: Optional[int] = Field(default=None, ge=1, description="Refill rate (for bursty)")
 
@@ -134,6 +158,14 @@ class AIMDGlobalRetryBudgetConfig(BaseModel):
     decrease_factor: float = Field(default=0.5, gt=0, lt=1, description="Multiplicative decrease factor on congestion")
     window_ms: float = Field(default=1000.0, gt=0, description="Update window in ms")
     failure_threshold: float = Field(default=0.1, ge=0, le=1, description="Failure rate threshold (0.0-1.0)")
+
+    @model_validator(mode="after")
+    def _rates_in_order(self):
+        if not self.min_rps <= self.initial_rps <= self.max_rps:
+            raise ValueError(
+                f"need min_rps <= initial_rps <= max_rps, got {self.min_rps}, {self.initial_rps}, {self.max_rps}"
+            )
+        return self
 
 
 class ArollaRetryBudgetConfig(BaseModel):
@@ -174,12 +206,15 @@ class LatencyInjectionConfig(BaseModel):
         return v
 
 
+Probability = Annotated[float, Field(ge=0, le=1)]
+
+
 class PartialFailureConfig(BaseModel):
     """Configuration for partial failure injection"""
     type: Literal[FaultType.PARTIAL_FAILURE] = FaultType.PARTIAL_FAILURE
     start_s: float = Field(ge=0, description="Start time in seconds")
     end_s: float = Field(ge=0, description="End time in seconds")
-    p_fail: Union[float, List[float]] = Field(default=0.0, description="Probability of failure (0.0 to 1.0) or list of values for sweep")
+    p_fail: Union[Probability, List[Probability]] = Field(default=0.0, description="Probability of failure (0.0 to 1.0) or list of values for sweep")
     
     @field_validator('end_s')
     @classmethod
@@ -258,6 +293,12 @@ class ServiceConfigYAML(BaseModel):
     # Legacy single-dependency field (deprecated, auto-converted to dependencies)
     dependency: Optional[str] = Field(default=None, description="DEPRECATED: use 'dependencies' list instead")
 
+    @model_validator(mode="after")
+    def _fold_legacy_dependency(self):
+        if self.dependency is not None and not self.dependencies:
+            self.dependencies = [DependencyConfig(service=self.dependency)]
+        return self
+
 
 # ============================================================================
 # Workload Configuration
@@ -285,7 +326,19 @@ class ClientConfigYAML(BaseModel):
     circuit_breaker: Optional[CircuitBreakerConfig] = Field(default=None, description="Client-side circuit breaker")
     retry_budget: Optional[RetryBudgetConfig] = Field(default=None, description="Client-side retry budget")
     e2e_retry_budget: Optional[int] = Field(default=None, ge=0, description="Arolla Level 2: max retries across all hops")
-    replicas: Union[int, List[int]] = Field(default=1, description="Number of replica clients to spawn (or list for sweep)")
+    replicas: Union[Annotated[int, Field(ge=1)], List[Annotated[int, Field(ge=1)]]] = Field(
+        default=1, description="Number of replica clients to spawn (or list for sweep)"
+    )
+
+    @field_validator("circuit_breaker")
+    @classmethod
+    def _client_breaker_type(cls, v):
+        if v is not None and v.type == CircuitBreakerType.COUNT_BASED:
+            raise ValueError(
+                "a client circuit breaker must be time_based or retry_circuit_breaker; "
+                "count_based is only available on services"
+            )
+        return v
 
 # ============================================================================
 # Sweep Configuration
@@ -349,15 +402,40 @@ class ExperimentConfig(BaseModel):
     plotting_script_args: Optional[dict] = Field(default=None, description="Arguments for the plotting script (key-value pairs)")
     sweeps: List[SweepConfig] = Field(default_factory=list, description="List of parameter sweeps")
     
-    @field_validator('services')
-    @classmethod
-    def validate_service_dependencies(cls, services):
-        """Validate that service dependencies exist"""
-        service_names = {svc.name for svc in services}
-        for svc in services:
-            if svc.dependency and svc.dependency not in service_names:
-                raise ValueError(f"Service {svc.name} depends on unknown service {svc.dependency}")
-        return services
+    @model_validator(mode="after")
+    def _check_names_and_references(self):
+        names = [s.name for s in self.services]
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        if duplicates:
+            raise ValueError(f"duplicate service names: {duplicates}")
+        for svc in self.services:
+            for dep in svc.dependencies:
+                if dep.service not in names:
+                    raise ValueError(f"service {svc.name!r} depends on unknown service {dep.service!r}")
+
+        client_names = [c.name for c in self.clients]
+        duplicates = sorted({n for n in client_names if client_names.count(n) > 1})
+        if duplicates:
+            raise ValueError(f"duplicate client names: {duplicates}")
+        for client in self.clients:
+            if client.target_service and client.target_service not in names:
+                raise ValueError(
+                    f"client {client.name!r} targets unknown service {client.target_service!r}"
+                )
+
+        first_by_budget = {}
+        for client in self.clients:
+            budget_id = client.retry_budget.shared_budget_id if client.retry_budget else None
+            if not budget_id:
+                continue
+            first = first_by_budget.setdefault(budget_id, client)
+            for field in ("retry", "circuit_breaker", "retry_budget"):
+                if getattr(client, field) != getattr(first, field):
+                    raise ValueError(
+                        f"clients {first.name!r} and {client.name!r} share retry budget {budget_id!r} "
+                        f"but have different {field!r} settings"
+                    )
+        return self
 
     @field_validator('clients')
     @classmethod

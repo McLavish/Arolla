@@ -4,10 +4,13 @@ from functools import partial
 from typing import Callable, List, Optional
 
 from simulator.core.engine import Simulator
-from simulator.core.types import DropReason, TimeDuration, TimePoint
+from simulator.core.types import DropReason, TimePoint
+
+from .service_attempts import CallResult
 
 
 class _ServiceDependencyMixin:
+
     # Severity ranking: higher value = more severe
     _DROP_SEVERITY = {
         DropReason.NONE: 0,
@@ -27,34 +30,26 @@ class _ServiceDependencyMixin:
         retry_budget_remaining: Optional[list] = None,
         tenant_id: Optional[str] = None,
     ):
-        """Call all dependencies concurrently, barrier-wait for all to complete."""
-        remaining = [len(deps)]
-        any_required_failed = [False]
-        worst_reason = [DropReason.NONE]
+        """Call all dependencies concurrently, and report once all of them are done."""
+        remaining = len(deps)
+        any_required_failed = False
+        worst_reason = DropReason.NONE
 
-        def on_dep_done(
-            dep_idx: int,
-            success: bool,
-            svc_time: TimeDuration,
-            drop_reason: DropReason,
-            queue_size: int,
-            _begin: TimePoint,
-            _deadline: Optional[TimePoint],
-        ):
-            remaining[0] -= 1
+        def on_dep_done(dep_idx: int, result: CallResult):
+            nonlocal remaining, any_required_failed, worst_reason
+            remaining -= 1
             is_optional = optionality[dep_idx] if dep_idx < len(optionality) else False
-            if not success and not is_optional:
-                any_required_failed[0] = True
-                if self._DROP_SEVERITY.get(drop_reason, 0) > self._DROP_SEVERITY.get(worst_reason[0], 0):
-                    worst_reason[0] = drop_reason
-            if remaining[0] == 0:
-                on_all_done(not any_required_failed[0], worst_reason[0])
+            if not result.success and not is_optional:
+                any_required_failed = True
+                if self._DROP_SEVERITY.get(result.drop_reason, 0) > self._DROP_SEVERITY.get(worst_reason, 0):
+                    worst_reason = result.drop_reason
+            if remaining == 0:
+                on_all_done(not any_required_failed, worst_reason)
 
         for i, dep in enumerate(deps):
-            dep.submit_request(
+            dep.submit_call(
                 sim,
-                on_attempt_done=partial(on_dep_done, i),
-                on_root_done=lambda: None,
+                partial(on_dep_done, i),
                 global_deadline=deadline,
                 is_retry=is_retry,
                 retry_budget_remaining=retry_budget_remaining,
@@ -73,22 +68,15 @@ class _ServiceDependencyMixin:
         retry_budget_remaining: Optional[list] = None,
         tenant_id: Optional[str] = None,
     ):
-        """Call dependencies one after another. Short-circuit on required failure."""
+        """Call dependencies one after another. Stop at the first required one that fails."""
         if idx >= len(deps):
             on_all_done(True, DropReason.NONE)
             return
 
-        def on_dep_done(
-            success: bool,
-            svc_time: TimeDuration,
-            drop_reason: DropReason,
-            queue_size: int,
-            _begin: TimePoint,
-            _deadline: Optional[TimePoint],
-        ):
+        def on_dep_done(result: CallResult):
             is_optional = optionality[idx] if idx < len(optionality) else False
-            if not success and not is_optional:
-                on_all_done(False, drop_reason)
+            if not result.success and not is_optional:
+                on_all_done(False, result.drop_reason)
                 return
             self._call_deps_sequential(
                 sim, deps, optionality, idx + 1, on_all_done, deadline, is_retry,
@@ -96,10 +84,9 @@ class _ServiceDependencyMixin:
                 tenant_id=tenant_id,
             )
 
-        deps[idx].submit_request(
+        deps[idx].submit_call(
             sim,
-            on_attempt_done=on_dep_done,
-            on_root_done=lambda: None,
+            on_dep_done,
             global_deadline=deadline,
             is_retry=is_retry,
             retry_budget_remaining=retry_budget_remaining,

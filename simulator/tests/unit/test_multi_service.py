@@ -402,23 +402,21 @@ class TestConfigLoaderMultiDep:
             ConfigLoader.build_simulation(config)
 
     def test_missing_dependency_error(self):
-        """Reference to non-existent service should raise ValueError."""
-        config = ExperimentConfig(
-            name="test_missing",
-            seed=42,
-            services=[
-                ServiceConfigYAML(
-                    name="A",
-                    latency=LatencyConfig(median_ms=10),
-                    workers=2,
-                    dependencies=[DependencyConfig(service="nonexistent")],
-                ),
-            ],
-            workload=WorkloadConfig(base_rps=10, duration_s=5),
-        )
-
-        with pytest.raises(ValueError, match="not found"):
-            ConfigLoader.build_simulation(config)
+        """Reference to non-existent service is rejected with the config."""
+        with pytest.raises(ValueError, match="depends on unknown service 'nonexistent'"):
+            ExperimentConfig(
+                name="test_missing",
+                seed=42,
+                services=[
+                    ServiceConfigYAML(
+                        name="A",
+                        latency=LatencyConfig(median_ms=10),
+                        workers=2,
+                        dependencies=[DependencyConfig(service="nonexistent")],
+                    ),
+                ],
+                workload=WorkloadConfig(base_rps=10, duration_s=5),
+            )
 
     def test_diamond_dependency(self):
         """Diamond: A→{B,C} parallel, B→D, C→D. D is shared leaf."""

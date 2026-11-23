@@ -3,11 +3,20 @@ from __future__ import annotations
 import heapq
 from collections import defaultdict
 from functools import partial
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, NamedTuple, Optional
 
 from simulator.core.engine import Simulator
 from simulator.core.types import DropReason, TimeDuration, TimePoint
 from simulator.policies.retry import RetryContext
+
+
+class CallResult(NamedTuple):
+    """Records the outcome of the last attempt made by the service"""
+    success: bool
+    svc_time: TimeDuration
+    drop_reason: DropReason
+    queue_size: int
+    attempt_deadline: Optional[TimePoint]
 
 
 class _ServiceAttemptMixin:
@@ -44,6 +53,7 @@ class _ServiceAttemptMixin:
                         sim.timestep,
                         None,
                     )
+                    on_root_done()
                     return
                 self._admission_admitted[tenant] += 1
 
@@ -58,6 +68,37 @@ class _ServiceAttemptMixin:
             tenant_id=tenant_id,
         )
         self._start_attempt(sim, ctx)
+
+    def submit_call(
+        self,
+        sim: Simulator,
+        on_result: Callable[[CallResult], None],
+        global_deadline: Optional[TimePoint] = None,
+        is_retry: bool = False,
+        retry_budget_remaining: Optional[list] = None,
+        tenant_id: Optional[str] = None,
+    ):
+        last_attempt = None
+
+        def on_attempt_done(success, svc_time, drop_reason, queue_size, _begin_time, attempt_deadline):
+            nonlocal last_attempt
+            last_attempt = CallResult(success, svc_time, drop_reason, queue_size, attempt_deadline)
+
+        def on_root_done():
+            if last_attempt is None:
+                on_result(CallResult(False, 0, DropReason.DEADLINE, len(self.queue), None))
+            else:
+                on_result(last_attempt)
+
+        self.submit_request(
+            sim,
+            on_attempt_done=on_attempt_done,
+            on_root_done=on_root_done,
+            global_deadline=global_deadline,
+            is_retry=is_retry,
+            retry_budget_remaining=retry_budget_remaining,
+            tenant_id=tenant_id,
+        )
 
     def _start_attempt(self, sim: Simulator, ctx: "_SrvRetryCtx"):
         if ctx.global_deadline is not None and sim.timestep >= ctx.global_deadline:

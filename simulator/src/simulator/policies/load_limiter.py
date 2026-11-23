@@ -23,6 +23,9 @@ class LoadLimiter(ABC):
     def applies_pre_queue_admission(self, is_retry: bool) -> bool:
         return False
 
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_blocked"
+
 
 class NoLoadLimiter(LoadLimiter):
     def next_delay(self, context: RetryContext) -> Tuple[bool, TimeDuration]:
@@ -46,7 +49,7 @@ class LeakyRateLimiterPolicy(LoadLimiter):
     def next_delay(self, context: RetryContext) -> Tuple[bool, TimeDuration]:
         if context.now is None:
             raise ValueError("LeakyRateLimiterPolicy requires context.now to be set")
-        if context.attempt > self.max_attempts:
+        if context.attempt >= self.max_attempts:
             return False, 0
         return True, self.add_request(context.now)
 
@@ -57,25 +60,25 @@ class BurstyRateLimiterPolicy(LoadLimiter):
     refill_rate: int
     period: TimeDuration
 
-    _tokens: int = field(init=False)
+    _tokens: float = field(init=False)
     _last_refill: Optional[TimePoint] = field(default=None, init=False)
 
     def __post_init__(self):
-        self._tokens = self.max_requests
+        self._tokens = float(self.max_requests)
 
     def _refill_tokens(self, now: TimePoint) -> None:
         if self._last_refill is None:
             self._last_refill = now
             return
         time_elapsed = now - self._last_refill
-        if time_elapsed > 0 and self.period > 0:
-            tokens_to_add = int((time_elapsed / self.period) * self.refill_rate)
-            self._tokens = min(self.max_requests, self._tokens + tokens_to_add)
+        if time_elapsed > 0:
+            tokens_to_add = (time_elapsed * self.refill_rate) / self.period
+            self._tokens = min(float(self.max_requests), self._tokens + tokens_to_add)
         self._last_refill = now
 
     def can_retry(self, now: TimePoint) -> bool:
         self._refill_tokens(now)
-        return self._tokens > 0
+        return self._tokens >= 1.0
 
     def next_delay(self, context: RetryContext) -> Tuple[bool, TimeDuration]:
         if context.now is None:
@@ -84,6 +87,9 @@ class BurstyRateLimiterPolicy(LoadLimiter):
             self._tokens -= 1
             return True, 0
         return False, 0
+
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_budget_exhausted"
 
 
 @dataclass
@@ -120,3 +126,6 @@ class FixedWindowBurstyLimiterPolicy(LoadLimiter):
             self._tokens -= 1
             return True, 0
         return False, 0
+
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_budget_exhausted"

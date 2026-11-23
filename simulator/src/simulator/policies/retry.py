@@ -32,6 +32,9 @@ class RetryPolicy(ABC):
         """
         return False
 
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_blocked"
+
 
 @dataclass
 class FixedBackoffRetryPolicy(RetryPolicy):

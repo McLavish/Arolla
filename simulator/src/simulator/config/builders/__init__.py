@@ -20,8 +20,8 @@ from .runtime import (
     build_service,
     build_workload,
 )
+from .seeds import get_stable_seed
 from .simulation import (
-    get_stable_seed,
     resolve_service_topology,
     build_service_graph,
     build_clients_and_workloads,

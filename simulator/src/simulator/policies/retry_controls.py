@@ -24,12 +24,12 @@ class RetryBudgetPolicy(RetryPolicy):
     _tokens: float = 0
     _max_tokens: float = 0
     retry_cost: int = 100
-    success_reward: int = 0
+    success_reward: float = 0
     _last_refill_time: int = field(default=0, init=False)
 
     def __post_init__(self):
         self.retry_cost = 100
-        self.success_reward = int(self.budget_ratio * self.retry_cost)
+        self.success_reward = self.budget_ratio * self.retry_cost
         self._max_tokens = self.retry_cost * self.max_retries
         self._tokens = self._max_tokens
 
@@ -257,15 +257,14 @@ class CountBasedCircuitBreakerPolicy(LoadLimiter):
     _opened_at: Optional[TimePoint] = None
 
     def __post_init__(self):
-        f, ftot = self.failure_threshold_ratio
-        s, stot = self.success_threshold_ratio
-        assert 0 <= f <= ftot and ftot > 0
-        assert 0 <= s <= stot and stot > 0
-        self._closed_window = deque(maxlen=ftot)
-        self._open_window = deque(maxlen=stot)
+        self._closed_window = deque(maxlen=self.failure_threshold_ratio[1])
+        self._open_window = deque(maxlen=self.success_threshold_ratio[1])
 
     def get_state(self) -> CBState:
         return self._state
+
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_state_{self._state.name}"
 
     def add_result(self, success: bool, now: TimePoint, **kwargs) -> None:
         if self._state == CBState.CLOSED:
@@ -275,15 +274,10 @@ class CountBasedCircuitBreakerPolicy(LoadLimiter):
                 if failures >= self.failure_threshold_ratio[0]:
                     self._state = CBState.OPEN
                     self._open_window.clear()
-                    if now is not None:
-                        self._opened_at = now
+                    self._opened_at = now
         elif self._state == CBState.OPEN:
             self._open_window.append(success)
-            if (
-                self._opened_at is None
-                or self.half_open_delay == 0
-                or now - self._opened_at >= self.half_open_delay
-            ):
+            if now - self._opened_at >= self.half_open_delay:
                 if len(self._open_window) == self._open_window.maxlen:
                     successes = sum(1 for ok in self._open_window if ok)
                     if successes >= self.success_threshold_ratio[0]:
@@ -300,7 +294,7 @@ class CountBasedCircuitBreakerPolicy(LoadLimiter):
 @dataclass
 class LimiterTimeBasedCircuitBreakerPolicy(LoadLimiter):
     failure_threshold_rate: float
-    success_threshold_rate: float
+    success_threshold_rate: Optional[float]
     min_requests: int
     window_duration: TimeDuration
     half_open_delay: TimeDuration
@@ -316,27 +310,29 @@ class LimiterTimeBasedCircuitBreakerPolicy(LoadLimiter):
     def get_state(self) -> CBState:
         return self._state
 
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_state_{self._state.name}"
+
     def add_result(self, success: bool, now: TimePoint, **kwargs) -> None:
         self._evict_old(now)
         self._window.append((now, success))
 
         total = len(self._window)
         failures = sum(1 for _, ok in self._window if not ok)
-        rate = failures / total if total > 0 else 0.0
+        rate = failures / total
 
         if self._state == CBState.CLOSED:
-            if total >= self.min_requests and rate > self.failure_threshold_rate:
+            if total >= self.min_requests and rate >= self.failure_threshold_rate:
                 self._state = CBState.OPEN
                 self._opened_at = now
-        elif self._state == CBState.OPEN:
-            if (
-                self._opened_at is None
-                or self.half_open_delay == 0
-                or now - self._opened_at >= self.half_open_delay
-            ):
-                if total >= self.min_requests and rate < (1 - self.success_threshold_rate):
-                    self._state = CBState.CLOSED
-                    self._opened_at = None
+        elif self._state == CBState.OPEN and now - self._opened_at >= self.half_open_delay:
+            if self.success_threshold_rate is None:
+                healthy = rate < self.failure_threshold_rate
+            else:
+                healthy = (total - failures) / total >= self.success_threshold_rate
+            if total >= self.min_requests and healthy:
+                self._state = CBState.CLOSED
+                self._opened_at = None
 
     def next_delay(self, context: RetryContext) -> Tuple[bool, TimeDuration]:
         if self._state == CBState.OPEN:
@@ -353,13 +349,13 @@ class LimiterRetryBudgetPolicy(LoadLimiter):
     max_retries: int
 
     _max_tokens: int = field(init=False)
-    _success_award: int = field(init=False)
+    _success_award: float = field(init=False)
     _retry_cost: int = field(init=False)
     _tokens: float = field(init=False)
 
     def __post_init__(self):
         self._retry_cost = 100
-        self._success_award = int(self._retry_cost * self.budget_ratio)
+        self._success_award = self._retry_cost * self.budget_ratio
         self._max_tokens = self._retry_cost * self.max_retries
         self._tokens = self._max_tokens
 
@@ -378,6 +374,9 @@ class LimiterRetryBudgetPolicy(LoadLimiter):
             self._tokens -= self._retry_cost
             return True, 0
         return False, 0
+
+    def refusal_reason(self) -> str:
+        return f"{type(self).__name__}_budget_exhausted"
 
     def applies_pre_queue_admission(self, is_retry: bool) -> bool:
         return is_retry

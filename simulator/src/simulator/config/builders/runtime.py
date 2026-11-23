@@ -13,6 +13,7 @@ from simulator.utils.time import ms_to_ns
 
 from .faults import build_latency_injections, build_partial_failures, build_load_spikes
 from .policies import build_retry_policy, build_timeout_policy, build_load_limiter
+from .seeds import get_stable_seed
 
 
 def build_service(
@@ -58,10 +59,24 @@ def build_service(
     ).bind(seed=seed, record_events=True)
 
 
-def build_workload(cfg: WorkloadConfig) -> Workload:
+def arrival_seed(rng_seed: Optional[int], position: int = 0, replica: int = 0) -> Optional[int]:
+    """Seed for the arrival times of a client.
+    To avoid all clients generating the same arrival times, we derive a deterministic seed from the base 
+    `rng_seed` using the `position` and `replica` of the client.
+
+    * `position`: the position of the client among the clients that target the same service (0, 1, 2, ...);
+    * `replica`: the index of the client among its `replicas` (0, 1, 2, ...).
+    """
+    if position == 0 and replica == 0:
+        return rng_seed
+    base = rng_seed if rng_seed is not None else 0
+    return get_stable_seed(base, f"arrivals:{position}:{replica}")
+
+
+def build_workload(cfg: WorkloadConfig, position: int = 0, replica: int = 0) -> Workload:
     return Workload(
         base_rps=cfg.base_rps,
         duration_s=cfg.duration_s,
         load_spikes=build_load_spikes(cfg.load_spikes),
-        rng_seed=cfg.rng_seed,
+        rng_seed=arrival_seed(cfg.rng_seed, position, replica),
     )

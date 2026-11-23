@@ -266,16 +266,16 @@ def test_leaky_rate_limiter_max_attempts():
         period=s_to_ns(1)
     )
     
-    # Attempts 1-3 should be allowed
-    for attempt in [1, 2, 3]:
+    # Attempts 1-2 should be allowed
+    for attempt in [1, 2]:
         ctx = RetryContext(attempt=attempt, now=0)
         should_allow, delay = limiter.next_delay(ctx)
         assert should_allow == True
-    
-    # Attempt 4 should be blocked
-    ctx = RetryContext(attempt=4, now=0)
-    should_allow, delay = limiter.next_delay(ctx)
-    assert should_allow == False
+    # Attempt 3-4 should be blocked
+    for attempt in [3, 4]:
+        ctx = RetryContext(attempt=attempt, now=0)
+        should_allow, delay = limiter.next_delay(ctx)
+        assert should_allow == False
     
     print("✓ Leaky rate limiter respects max_attempts")
 

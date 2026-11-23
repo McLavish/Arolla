@@ -138,8 +138,9 @@ class Metrics:
             b_end = bin_of(a.interval.end)
             if 0 <= b_end < nbuckets:
                 completed_counts[b_end] += 1
-                if getattr(a, "queue_size_at_end", None) is not None:
-                    queue_sizes_by_bucket[b_end].append(int(a.queue_size_at_end))
+                queue_size = getattr(a, "queue_size_at_end", None)
+                if queue_size is not None and queue_size >= 0:
+                    queue_sizes_by_bucket[b_end].append(int(queue_size))
 
         # Populate buckets
         for root in self.roots:

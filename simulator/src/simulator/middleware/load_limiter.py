@@ -73,7 +73,7 @@ class LoadLimiterMiddleware(Middleware):
             # Limiter blocks retry (e.g., circuit breaker open, budget exhausted)
             ctx.should_retry = False
             ctx.metadata['limiter_blocked'] = True
-            ctx.metadata['limiter_reason'] = self._get_limiter_reason()
+            ctx.metadata['limiter_reason'] = self.limiter.refusal_reason()
         else:
             # Limiter admits the retry
             self._retry_admitted[tenant] += 1
@@ -99,22 +99,6 @@ class LoadLimiterMiddleware(Middleware):
             }
             for tenant in tenants
         }
-    
-    def _get_limiter_reason(self) -> str:
-        """Get human-readable reason for limiter blocking retry"""
-        limiter_type = type(self.limiter).__name__
-        
-        # Check circuit breaker state
-        if hasattr(self.limiter, 'get_state'):
-            state = self.limiter.get_state()
-            return f"{limiter_type}_state_{state.name}"
-        
-        # Check retry budget
-        if hasattr(self.limiter, 'can_retry'):
-            if not self.limiter.can_retry():
-                return f"{limiter_type}_budget_exhausted"
-        
-        return f"{limiter_type}_blocked"
 
 
 class CompositeLoadLimiterMiddleware(Middleware):
