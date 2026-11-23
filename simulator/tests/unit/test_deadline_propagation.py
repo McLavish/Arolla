@@ -100,12 +100,81 @@ def test_an_earlier_deadline_of_the_whole_request_still_applies():
     assert service_attempts(service) == [(10, DEADLINE)]
 
 
+# A service passes its own attempt deadline on to its dependencies, unless it is given
+# `propagate_deadline: false`. Below, service A gives up on an attempt after 15 ms.
+
+
+def make_caller(deps, propagate_deadline):
+    cfg = ServiceConfig(
+        name="a", latency_median=ms_to_ns(5), latency_lognorm_sigma=0.0, workers=1,
+        timeout=StaticTimeout(attempt_timeout=ms_to_ns(15)),
+    )
+    return ServiceRuntime(cfg=cfg, dependencies=deps, propagate_deadline=propagate_deadline).bind(
+        seed=1, record_events=True
+    )
+
+
+def call(target):
+    """Send one call; returns (when it was answered in ms, drop reason)."""
+    sim = Simulator(seed=1)
+    answers = []
+    target.submit_call(sim, lambda r: answers.append((round(ns_to_ms(sim.timestep)), r.drop_reason)))
+    sim.run()
+    (answer,) = answers
+    return answer
+
+
+def test_by_default_a_dependency_stops_at_the_deadline_of_its_caller():
+    b = make_service(median_ms=20)
+    assert call(make_caller([b], propagate_deadline=True)) == (15, DEADLINE)
+    assert service_attempts(b) == [(15, DEADLINE)]
+
+
+def test_without_propagation_the_dependency_finishes_after_its_caller_gave_up():
+    b = make_service(median_ms=20)
+    a = make_caller([b], propagate_deadline=False)
+    assert call(a) == (15, DEADLINE)
+    assert service_attempts(a) == [(15, DEADLINE)]
+    assert service_attempts(b) == [(20, OK)]
+    assert a.in_flight == 0
+
+
+def test_without_propagation_the_dependency_also_keeps_retrying():
+    """B takes 10 ms, fails, and retries up to three times."""
+    b = make_service(median_ms=10, fail_until_ms=100, max_attempts=3)
+    assert call(make_caller([b], propagate_deadline=True)) == (15, DEADLINE)
+    assert service_attempts(b) == [(10, FAILURE), (15, DEADLINE)]
+
+    b = make_service(median_ms=10, fail_until_ms=100, max_attempts=3)
+    assert call(make_caller([b], propagate_deadline=False)) == (15, DEADLINE)
+    assert service_attempts(b) == [(10, FAILURE), (20, FAILURE), (30, FAILURE)]
+
+
+def test_after_giving_up_the_service_does_not_call_its_next_dependency():
+    """A calls B and then C. B answers at 20 ms, after A gave up: C is never called."""
+    b, c = make_service(median_ms=20), make_service(median_ms=1)
+    assert call(make_caller([b, c], propagate_deadline=False)) == (15, DEADLINE)
+    assert service_attempts(b) == [(20, OK)]
+    assert service_attempts(c) == []
+
+
+def test_an_answer_in_time_is_used_as_usual():
+    """B answers after 5 ms, then A does its own 5 ms of work."""
+    b = make_service(median_ms=5)
+    assert call(make_caller([b], propagate_deadline=False)) == (10, OK)
+
+
 CONFIG = """
 name: deadline_propagation
 services:
+  - name: db
+    latency: {median_ms: 1}
+    workers: 1
   - name: api
     latency: {median_ms: 1}
     workers: 1
+    dependencies: [{service: db}]
+    propagate_deadline: false
 clients:
   - name: plain
     workload: {base_rps: 10, duration_s: 1}
@@ -117,9 +186,11 @@ clients:
 """
 
 
-def test_the_yaml_key_reaches_the_client():
-    _, clients, _, _, _ = ConfigLoader.build_simulation(ConfigLoader.load_from_string(CONFIG))
+def test_the_yaml_key_reaches_the_client_and_the_service():
+    _, clients, _, _, services = ConfigLoader.build_simulation(ConfigLoader.load_from_string(CONFIG))
     assert [client.cfg.propagate_deadline for client in clients] == [False, True]
+    assert services["api"].propagate_deadline is False
+    assert services["db"].propagate_deadline is True
 
 
 def test_the_key_is_refused_on_a_client_without_an_attempt_timeout():

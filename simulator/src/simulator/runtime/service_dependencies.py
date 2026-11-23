@@ -29,6 +29,11 @@ class _ServiceDependencyMixin:
         tenant_id: Optional[str] = None,
     ):
         """Call the service's dependencies, all at once or one after another."""
+        gave_up = None
+        if not self.propagate_deadline and deadline is not None:
+            on_all_done, gave_up = self._watch_own_deadline(sim, deadline, on_all_done)
+            deadline = None
+
         if self.dependency_call_pattern == "parallel":
             self._call_deps_parallel(
                 sim, self.dependencies, self.dependency_optionality, on_all_done, deadline, is_retry,
@@ -37,8 +42,40 @@ class _ServiceDependencyMixin:
         else:
             self._call_deps_sequential(
                 sim, self.dependencies, self.dependency_optionality, 0, on_all_done, deadline, is_retry,
-                retry_budget_remaining=retry_budget_remaining, tenant_id=tenant_id,
+                retry_budget_remaining=retry_budget_remaining, tenant_id=tenant_id, gave_up=gave_up,
             )
+
+    def _watch_own_deadline(
+        self,
+        sim: Simulator,
+        deadline: TimePoint,
+        on_all_done: Callable[[bool, DropReason], None],
+    ):
+        """For a service that does not pass its deadline on to its dependencies.
+
+        The calls do not know the deadline, so the service watches it itself: when it
+        passes, the service stops waiting and reports a timeout. The calls keep running,
+        and whatever they answer later is ignored.
+
+        Returns the callback for the answer of the calls, and a function that tells
+        whether the service has stopped waiting.
+        """
+        state = "waiting"
+
+        def give_up():
+            nonlocal state
+            if state == "waiting":
+                state = "gave_up"
+                on_all_done(False, DropReason.DEADLINE)
+
+        def on_answer(all_success: bool, reason: DropReason):
+            nonlocal state
+            if state == "waiting":
+                state = "answered"
+                on_all_done(all_success, reason)
+
+        sim.schedule(deadline, give_up)
+        return on_answer, lambda: state == "gave_up"
 
     def _call_deps_parallel(
         self,
@@ -110,6 +147,7 @@ class _ServiceDependencyMixin:
         is_retry: bool,
         retry_budget_remaining: Optional[list] = None,
         tenant_id: Optional[str] = None,
+        gave_up: Optional[Callable[[], bool]] = None,
     ):
         """Call dependencies one after another. Stop at the first required one that fails."""
         if idx >= len(deps):
@@ -117,6 +155,8 @@ class _ServiceDependencyMixin:
             return
 
         def on_dep_done(result: CallResult):
+            if gave_up is not None and gave_up():
+                return  # the service has stopped waiting: the next dependency is not called
             is_optional = optionality[idx] if idx < len(optionality) else False
             if not result.success and not is_optional:
                 on_all_done(False, result.drop_reason)
@@ -125,6 +165,7 @@ class _ServiceDependencyMixin:
                 sim, deps, optionality, idx + 1, on_all_done, deadline, is_retry,
                 retry_budget_remaining=retry_budget_remaining,
                 tenant_id=tenant_id,
+                gave_up=gave_up,
             )
 
         deps[idx].submit_call(

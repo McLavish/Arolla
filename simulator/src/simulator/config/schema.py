@@ -310,6 +310,10 @@ class ServiceConfigYAML(BaseModel):
         default=LocalWork.LAST,
         description="A service with dependencies does its own work after its calls (last) or before them (first)",
     )
+    propagate_deadline: bool = Field(
+        default=True,
+        description="Pass the service's attempt deadline on to its dependencies. If false, they keep working after the service has given up",
+    )
 
     # Legacy single-dependency field (deprecated, auto-converted to dependencies)
     dependency: Optional[str] = Field(default=None, description="DEPRECATED: use 'dependencies' list instead")

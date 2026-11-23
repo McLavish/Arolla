@@ -58,6 +58,7 @@ def build_service(
         dependency_call_pattern=dependency_call_pattern,
         dependency_fail_fast=cfg.dependency_join == DependencyJoin.FAIL_FAST,
         local_work_first=cfg.local_work == LocalWork.FIRST,
+        propagate_deadline=cfg.propagate_deadline,
     ).bind(seed=seed, record_events=True)
 
 
