@@ -10,13 +10,6 @@ from .service_attempts import CallResult
 
 
 class _ServiceDependencyMixin:
-    """How a service calls its dependencies.
-
-    Each dependency call counts once, when the dependency is done with it, even
-    if the dependency retries on its own (see `submit_call`). Example: B fails
-    at 10 ms, retries, and succeeds at 20 ms; the service calling B sees one
-    success, at 20 ms.
-    """
 
     # Severity ranking: higher value = more severe
     _DROP_SEVERITY = {

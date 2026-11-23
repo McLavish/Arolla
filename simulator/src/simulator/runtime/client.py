@@ -124,12 +124,13 @@ class ClientRuntime:
     def _follow_call_with_policy(self, ctx: AttemptCtx, sim: Simulator, begin_time: TimePoint) -> _Call:
         """The client has a retry policy, which decides once per call.
 
-        The service may retry the call on its own, so the call's result is the
-        outcome of the service's last attempt (see `submit_call`). The client
-        records it as one attempt and lets its policy decide what comes next.
+        The service may also have a retry policy, meaning that result of the client call is the
+        outcome of last attempt made by the service (see `submit_call`). The client
+        records it as one attempt and lets the client policy decide what to do.
 
-        If the client's timeout fires first, the client records a timeout instead,
-        and whatever the service reports for this call afterwards is ignored.
+        If the client timeout elapses first, the client records a timeout instead.
+        Whatever the service reports afterwards is ignored.
+        Note that in this case the client retry policy may still decide to retry.
         """
         over = False
 

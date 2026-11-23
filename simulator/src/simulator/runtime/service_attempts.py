@@ -11,7 +11,7 @@ from simulator.policies.retry import RetryContext
 
 
 class CallResult(NamedTuple):
-    """How one call to a service ended: the outcome of the service's last attempt."""
+    """Records the outcome of the last attempt made by the service"""
     success: bool
     svc_time: TimeDuration
     drop_reason: DropReason
@@ -78,16 +78,6 @@ class _ServiceAttemptMixin:
         retry_budget_remaining: Optional[list] = None,
         tenant_id: Optional[str] = None,
     ):
-        """Send one request and report how it ended, once, when this service is done with it.
-
-        The service may retry the request on its own. `on_result` is called once,
-        at the end, with the outcome of the service's last attempt.
-
-        Example: attempt 1 fails at 10 ms, the service retries, and attempt 2
-        succeeds at 20 ms. `on_result` is called once, at 20 ms, with the success.
-        If the service made no attempt at all, because the deadline had already
-        passed, the result is a DEADLINE failure.
-        """
         last_attempt = None
 
         def on_attempt_done(success, svc_time, drop_reason, queue_size, _begin_time, attempt_deadline):
