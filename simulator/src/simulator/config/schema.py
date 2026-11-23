@@ -252,6 +252,12 @@ class DependencyCallPattern(str, Enum):
     PARALLEL = "parallel"      # Call all deps concurrently (total latency = max)
 
 
+class DependencyJoin(str, Enum):
+    """When a service with parallel dependencies gives up on its attempt"""
+    WAIT_ALL = "wait_all"    # after every call has answered
+    FAIL_FAST = "fail_fast"  # as soon as one required call has failed
+
+
 class DependencyConfig(BaseModel):
     """Configuration for a single service dependency"""
     service: str = Field(description="Target service name")
@@ -290,6 +296,11 @@ class ServiceConfigYAML(BaseModel):
         description="How to call dependencies: sequential (sum latency) or parallel (max latency)"
     )
     
+    dependency_join: DependencyJoin = Field(
+        default=DependencyJoin.WAIT_ALL,
+        description="Parallel dependencies: give up after every call has answered, or at the first failed call",
+    )
+
     # Legacy single-dependency field (deprecated, auto-converted to dependencies)
     dependency: Optional[str] = Field(default=None, description="DEPRECATED: use 'dependencies' list instead")
 
@@ -297,6 +308,16 @@ class ServiceConfigYAML(BaseModel):
     def _fold_legacy_dependency(self):
         if self.dependency is not None and not self.dependencies:
             self.dependencies = [DependencyConfig(service=self.dependency)]
+        return self
+
+    @model_validator(mode="after")
+    def _check_dependency_options(self):
+        parallel = self.dependency_call_pattern == DependencyCallPattern.PARALLEL
+        if self.dependency_join == DependencyJoin.FAIL_FAST and not parallel:
+            raise ValueError(
+                f"service {self.name!r}: dependency_join 'fail_fast' needs dependency_call_pattern 'parallel' "
+                "(sequential calls already stop at the first failed call)"
+            )
         return self
 
 
