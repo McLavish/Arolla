@@ -334,6 +334,11 @@ class ClientConfigYAML(BaseModel):
         default=1, description="Number of replica clients to spawn (or list for sweep)"
     )
 
+    propagate_deadline: bool = Field(
+        default=False,
+        description="Tell the service the client's attempt deadline, so it stops working on a call when attempt_ms runs out",
+    )
+
     @field_validator("circuit_breaker")
     @classmethod
     def _client_breaker_type(cls, v):
@@ -343,6 +348,12 @@ class ClientConfigYAML(BaseModel):
                 "count_based is only available on services"
             )
         return v
+
+    @model_validator(mode="after")
+    def _propagated_deadline_needs_a_timeout(self):
+        if self.propagate_deadline and not (self.timeout and self.timeout.attempt_ms):
+            raise ValueError(f"client {self.name!r}: propagate_deadline needs timeout.attempt_ms")
+        return self
 
 # ============================================================================
 # Sweep Configuration

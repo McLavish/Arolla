@@ -224,6 +224,21 @@ clients:
       duration_s: 60
 ```
 
+### Deadline Propagation
+
+A client's `timeout.attempt_ms` is its own: by default the service keeps working on
+a call the client has given up on. With `propagate_deadline` the service is told
+the deadline and stops working on the call at that moment:
+
+```yaml
+clients:
+  - name: client_a
+    target_service: api
+    timeout:
+      attempt_ms: 100
+    propagate_deadline: true
+```
+
 ### Parameter Sweeps
 
 Use inline lists to sweep over parameter values:
