@@ -188,6 +188,19 @@ workload:
       rps_multiplier: 2.0      # 2x traffic
 ```
 
+### Exact Arrivals
+
+By default every client sends its first request at t = 0, and a load spike only
+takes effect at the next arrival. With `exact_arrivals` the first request is drawn
+like every other, and a spike starts and ends exactly on time:
+
+```yaml
+workload:
+  base_rps: 300
+  duration_s: 120
+  exact_arrivals: true
+```
+
 ### Multi-Client Mode
 
 ```yaml

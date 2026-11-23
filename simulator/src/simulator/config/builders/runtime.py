@@ -79,4 +79,5 @@ def build_workload(cfg: WorkloadConfig, position: int = 0, replica: int = 0) -> 
         duration_s=cfg.duration_s,
         load_spikes=build_load_spikes(cfg.load_spikes),
         rng_seed=arrival_seed(cfg.rng_seed, position, replica),
+        exact_arrivals=cfg.exact_arrivals,
     )
