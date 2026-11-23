@@ -6,6 +6,7 @@ from simulator.core.types import TimePoint, TimeDuration, DropReason
 from simulator.core.models import Request, RootRequest, TimeInterval
 from simulator.core.engine import Simulator
 from simulator.runtime.service import ServiceRuntime
+from simulator.runtime.service_attempts import CallResult
 from simulator.metrics.collector import Metrics
 from simulator.policies.retry import RetryPolicy, RetryContext
 from simulator.policies.timeout import Timeout
@@ -27,11 +28,10 @@ class AttemptCtx:
 
 
 class _Call(NamedTuple):
-    """Models the client call to the service (one submit_request)."""
-    on_attempt_done: Callable[..., None]  # the service reports one of their attempts
-    on_root_done: Callable[[], None]      # the service has finished the call
-    answered: Callable[[], bool]          # has the call already given the client a result?
-    walk_away: Callable[[], None]         # the client's timeout fired: stop following this call
+    """Models one client call to the service."""
+    submit: Callable[..., None]   # sends the call to the service
+    answered: Callable[[], bool]  # has the call already given the client a result?
+    walk_away: Callable[[], None] # the client's timeout fired: stop following this call
 
 
 @dataclass
@@ -97,10 +97,7 @@ class ClientRuntime:
                     partial(self._on_local_timeout, ctx, sim, call, begin_time),
                 )
 
-        self.service.submit_request(
-            sim,
-            on_attempt_done=call.on_attempt_done,
-            on_root_done=call.on_root_done,
+        call.submit(
             global_deadline=ctx.root.global_deadline,
             is_retry=is_retry,
             retry_budget_remaining=ctx._retry_budget_remaining,
@@ -115,34 +112,41 @@ class ClientRuntime:
         ends as a failure. Whatever the service reports afterwards is ignored.
         """
         return _Call(
-            on_attempt_done=partial(self._record_attempt, ctx, sim),
-            on_root_done=partial(self._on_root_done, ctx),
+            submit=partial(
+                self.service.submit_request, sim,
+                on_attempt_done=partial(self._record_attempt, ctx, sim),
+                on_root_done=partial(self._on_root_done, ctx),
+            ),
             answered=lambda: ctx.root.done,
             walk_away=partial(self._on_root_done, ctx),
         )
 
     def _follow_call_with_policy(self, ctx: AttemptCtx, sim: Simulator, begin_time: TimePoint) -> _Call:
-        """The client has a retry policy.
+        """The client has a retry policy, which decides once per call.
 
-        The service may have a server-side retry policy and will make the call on its own and reports each attempt.
-        Only the results of the last service call are considered (on_root_done).
+        The service may retry the call on its own, so the call's result is the
+        outcome of the service's last attempt (see `submit_call`). The client
+        records it as one attempt and lets its policy decide what comes next.
 
-        If the client timeout elapses before the service has finished, the request
-        ends as a failure. Whatever the service reports afterwards is ignored.
+        If the client's timeout fires first, the client records a timeout instead,
+        and whatever the service reports for this call afterwards is ignored.
         """
-        last_attempt = None
         over = False
 
-        def on_attempt_done(success, svc_time, drop_reason, queue_size, _attempt_begin, attempt_deadline):
-            nonlocal last_attempt
-            last_attempt = (success, svc_time, drop_reason, queue_size, attempt_deadline)
-
-        def on_root_done():
+        def on_result(result: CallResult):
             nonlocal over
             if over:
                 return  # the client already timed this call out
             over = True
-            self._on_call_done(ctx, sim, begin_time, last_attempt)
+            self._record_attempt(
+                ctx, sim,
+                success=result.success,
+                svc_time=result.svc_time,
+                drop_reason=result.drop_reason,
+                queue_size=result.queue_size,
+                begin_time=begin_time,
+                attempt_deadline=result.attempt_deadline,
+            )
 
         def answered():
             return over
@@ -151,28 +155,7 @@ class ClientRuntime:
             nonlocal over
             over = True
 
-        return _Call(on_attempt_done, on_root_done, answered, walk_away)
-
-    def _on_call_done(
-        self, ctx: AttemptCtx, sim: Simulator, call_begin_time: TimePoint, last_attempt: Optional[tuple],
-    ):
-        """The service has finished a call: record its result as one client attempt."""
-        if last_attempt is None:
-            # The service made no attempt: the request's deadline had already passed.
-            success, svc_time, drop_reason = False, 0, DropReason.DEADLINE
-            queue_size, attempt_deadline = len(self.service.queue), None
-        else:
-            success, svc_time, drop_reason, queue_size, attempt_deadline = last_attempt
-
-        self._record_attempt(
-            ctx, sim,
-            success=success,
-            svc_time=svc_time,
-            drop_reason=drop_reason,
-            queue_size=queue_size,
-            begin_time=call_begin_time,
-            attempt_deadline=attempt_deadline,
-        )
+        return _Call(partial(self.service.submit_call, sim, on_result), answered, walk_away)
 
     def _on_local_timeout(self, ctx: AttemptCtx, sim: Simulator, call: _Call, begin_time: TimePoint):
         """The client attempt timeout has elapsed. If the call is still running at the
