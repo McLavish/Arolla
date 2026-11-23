@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 from typing import List, Optional
 
-from simulator.config.schema import DependencyJoin, ServiceConfigYAML, WorkloadConfig
+from simulator.config.schema import DependencyJoin, LocalWork, ServiceConfigYAML, WorkloadConfig
 from simulator.runtime.service import ServiceConfig, ServiceRuntime
 from simulator.runtime.workload import Workload
 from simulator.core.engine import Simulator
@@ -57,6 +57,7 @@ def build_service(
         dependency_optionality=dependency_optionality or [],
         dependency_call_pattern=dependency_call_pattern,
         dependency_fail_fast=cfg.dependency_join == DependencyJoin.FAIL_FAST,
+        local_work_first=cfg.local_work == LocalWork.FIRST,
     ).bind(seed=seed, record_events=True)
 
 

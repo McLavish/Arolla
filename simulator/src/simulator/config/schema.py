@@ -258,6 +258,12 @@ class DependencyJoin(str, Enum):
     FAIL_FAST = "fail_fast"  # as soon as one required call has failed
 
 
+class LocalWork(str, Enum):
+    """When a service with dependencies does its own work"""
+    LAST = "last"    # after its calls have answered
+    FIRST = "first"  # before it calls its dependencies
+
+
 class DependencyConfig(BaseModel):
     """Configuration for a single service dependency"""
     service: str = Field(description="Target service name")
@@ -299,6 +305,10 @@ class ServiceConfigYAML(BaseModel):
     dependency_join: DependencyJoin = Field(
         default=DependencyJoin.WAIT_ALL,
         description="Parallel dependencies: give up after every call has answered, or at the first failed call",
+    )
+    local_work: LocalWork = Field(
+        default=LocalWork.LAST,
+        description="A service with dependencies does its own work after its calls (last) or before them (first)",
     )
 
     # Legacy single-dependency field (deprecated, auto-converted to dependencies)

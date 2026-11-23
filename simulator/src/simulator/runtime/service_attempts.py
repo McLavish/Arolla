@@ -182,6 +182,12 @@ class _ServiceAttemptMixin:
 
         self.in_flight += 1
 
+        if self.dependencies and self.local_work_first:
+            self._work_then_call_dependencies(
+                sim, on_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id
+            )
+            return
+
         if self.dependencies:
             start_t = sim.timestep
 
@@ -220,29 +226,9 @@ class _ServiceAttemptMixin:
 
                 sim.schedule(expiry, finish_after_deps)
 
-            if self.dependency_call_pattern == "parallel":
-                self._call_deps_parallel(
-                    sim,
-                    self.dependencies,
-                    self.dependency_optionality,
-                    on_all_deps_done,
-                    attempt_deadline,
-                    is_retry,
-                    retry_budget_remaining=retry_budget_remaining,
-                    tenant_id=tenant_id,
-                )
-            else:
-                self._call_deps_sequential(
-                    sim,
-                    self.dependencies,
-                    self.dependency_optionality,
-                    0,
-                    on_all_deps_done,
-                    attempt_deadline,
-                    is_retry,
-                    retry_budget_remaining=retry_budget_remaining,
-                    tenant_id=tenant_id,
-                )
+            self._call_dependencies(
+                sim, on_all_deps_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id
+            )
             return
 
         service_time = self._sample_service_time(sim.timestep, sim)
@@ -254,6 +240,49 @@ class _ServiceAttemptMixin:
         sim.schedule(
             expiry, partial(self._finish_service, sim, on_done, service_time, attempt_deadline)
         )
+
+    def _work_then_call_dependencies(
+        self,
+        sim: Simulator,
+        on_done: Callable[[bool, TimeDuration, DropReason, int], None],
+        attempt_deadline: Optional[TimePoint],
+        is_retry: bool,
+        retry_budget_remaining: Optional[list],
+        tenant_id: Optional[str],
+    ):
+        """The service does its own work first and then calls its dependencies. It keeps
+        its worker until the last call has answered.
+
+        If the work fails or runs past the deadline, the dependencies are never called.
+        """
+        start_t = sim.timestep
+        work_ends = start_t + self._sample_service_time(start_t, sim)
+        if attempt_deadline is not None:
+            work_ends = min(work_ends, attempt_deadline)
+
+        def report(success: bool, reason: DropReason):
+            self.in_flight -= 1
+            on_done(success, sim.timestep - start_t, reason, len(self.queue))
+            self._start_next(sim)
+
+        def on_calls_done(all_success: bool, reason: DropReason):
+            # A failed optional call can use up the whole deadline without failing the attempt.
+            if all_success and attempt_deadline is not None and sim.timestep >= attempt_deadline:
+                report(False, DropReason.DEADLINE)
+            else:
+                report(all_success, reason)
+
+        def on_work_done():
+            if attempt_deadline is not None and sim.timestep >= attempt_deadline:
+                report(False, DropReason.DEADLINE)
+            elif self._fails_now(sim.timestep, sim):
+                report(False, DropReason.SERVER_FAILURE)
+            else:
+                self._call_dependencies(
+                    sim, on_calls_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id
+                )
+
+        sim.schedule(work_ends, on_work_done)
 
     def _finish_service(
         self,

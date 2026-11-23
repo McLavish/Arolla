@@ -199,10 +199,14 @@ services:
         optional: true                  # a failed optional call does not fail the request
     dependency_call_pattern: parallel   # sequential (default) | parallel
     dependency_join: fail_fast          # wait_all (default) | fail_fast
+    local_work: first                   # last (default) | first
 ```
 
 With `fail_fast` a service gives up at the first failed parallel call instead of
 waiting for every call to answer. The other calls keep running.
+
+By default a service calls its dependencies and then does its own work. With
+`local_work: first` it does its own work before the calls.
 
 ### Exact Arrivals
 

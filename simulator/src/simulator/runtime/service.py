@@ -79,6 +79,7 @@ class ServiceRuntime(
     dependency_optionality: List[bool] = field(default_factory=list)
     dependency_call_pattern: str = "sequential"
     dependency_fail_fast: bool = False  # parallel calls: fail at the first failed call
+    local_work_first: bool = False  # do the service's own work before calling the dependencies
 
     _middleware_chain: Optional[MiddlewareChain] = field(
         default=None, init=False, repr=False
