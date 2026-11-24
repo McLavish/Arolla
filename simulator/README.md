@@ -204,10 +204,10 @@ services:
     local_work: first                   # last (default) | first
 ```
 
-- **`dependency_call_pattern`** controls whether dependencies are called one after another (`sequential`) or at the same time (`parallel`).
-- **`dependency_join`** controls how the service waits for parallel calls. With `wait_all`, it waits for every call to finish. With `fail_fast`, it stops waiting as soon as a required dependency fails. Any other calls already in progress continue running.
-- **`local_work`** controls when the service performs its own work. By default (`last`), it calls its dependencies first. With `first`, it completes its own work before calling them.
-- **`optional`** determines whether a dependency failure causes the request to fail. If set to `true`, a failure of that dependency does not fail the request.
+- `dependency_call_pattern` controls whether dependencies are called one after another (`sequential`) or at the same time (`parallel`).
+- `dependency_join` controls how the service waits for parallel calls. With `wait_all`, it waits for every call to finish. With `fail_fast`, it stops waiting as soon as a required dependency fails. Any other calls already in progress continue running.
+- `local_work` controls when the service performs its own work. By default (`last`), it calls its dependencies first. With `first`, it completes its own work before calling them.
+- `optional` determines whether a dependency failure causes the request to fail. If set to `true`, a failure of that dependency does not fail the request.
 
 ### Exact Arrivals
 
