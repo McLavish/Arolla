@@ -51,9 +51,7 @@ class _ServiceDependencyMixin:
         deadline: TimePoint,
         on_all_done: Callable[[bool, DropReason], None],
     ):
-        """The calls do not know the deadline, so the service watches it: when it passes, the
-        service reports a timeout and ignores what the calls answer later. Returns the callback
-        for that answer, and a function that tells whether the service has given up."""
+        """For a service that does not pass its deadline on to its dependencies."""
         state = "waiting"
 
         def give_up():
@@ -98,7 +96,7 @@ class _ServiceDependencyMixin:
                 if self._DROP_SEVERITY.get(result.drop_reason, 0) > self._DROP_SEVERITY.get(worst_reason, 0):
                     worst_reason = result.drop_reason
             if reported:
-                return  # the attempt has already failed, nobody waits for this call
+                return
             if remaining == 0 or (self.dependency_fail_fast and any_required_failed):
                 reported = True
                 on_all_done(not any_required_failed, worst_reason)
@@ -133,7 +131,7 @@ class _ServiceDependencyMixin:
 
         def on_dep_done(result: CallResult):
             if gave_up is not None and gave_up():
-                return  # the service has stopped waiting: the next dependency is not called
+                return
             is_optional = optionality[idx] if idx < len(optionality) else False
             if not result.success and not is_optional:
                 on_all_done(False, result.drop_reason)
