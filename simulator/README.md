@@ -302,6 +302,23 @@ Run with: `python bin/workflow.py config.yaml` (auto-detects sweeps).
 | `python bin/run_experiment.py <yaml> --validate-only` | Validate config without running |
 | `python bin/run_sweep.py <yaml>` | Parameter sweep only |
 
+## Tests
+
+```bash
+# Unit tests, from simulator/
+PYTHONPATH=src python -m pytest -q
+
+# Shipped scenarios, from the repository root: compare this branch with main
+git worktree add ../arolla-main main
+python simulator/bin/check_scenarios.py ../arolla-main .
+```
+
+`bin/check_scenarios.py` runs every scenario in `experiments/yaml` with the code of both
+checkouts and lists the scenarios whose results differ. GitHub runs both checks on every
+pull request that changes `simulator/`. A change that is meant to change results, such as
+a bug fix, fails the scenario check; the pull request should then say which scenarios
+change and why.
+
 ## Capacity Planning
 
 Use Little's Law to calculate service headroom:
