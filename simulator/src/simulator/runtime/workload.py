@@ -36,9 +36,12 @@ class Workload:
     def _sample_interarrival(self, time: TimePoint) -> TimeDuration:
         rps = self.rps_at(time)
         if rps <= 0.0:
-            # No load right now - push a bit forward.
+            # No requests should arrive at the current rate.
+            # Check again in 0.5 seconds in case the rate changes.
             return s_to_ns(0.5)
-        # Use workload's own RNG so arrivals are identical across experiments
+        
+        # Use a separate random generator so request timing is reproducible
+        # for the same workload settings and seed.
         return s_to_ns(self._rng.expovariate(rps))
 
     def drive(self, sim: Simulator, on_arrival: Callable[[Simulator], None]):
@@ -55,23 +58,30 @@ class Workload:
             ia = max(1, self._sample_interarrival(sim.timestep))
             sim.schedule(sim.timestep + ia, tick)
 
-        # start at t=0
+        # Send the first request at t=0.
         sim.schedule(0, tick)
 
     def _drive_exact(self, sim: Simulator, on_arrival: Callable[[Simulator], None]):
-        """Arrivals as an exact Poisson process whose rate follows the load spikes.
+        """Generate requests while accounting for changes in traffic rate.
 
-        Two differences from the default: the first request is drawn like every other
-        (none is sent at t = 0), and a load spike starts and ends exactly on time.
-        Without a load spike the requests arrive at the same instants as by default,
-        minus the one at t = 0.
+        The default implementation chooses the next request time using the
+        current RPS. If the RPS changes before that request arrives, the
+        scheduled time is not updated. This can cause short load spikes
+        to be missed entirely.
+
+        This implementation accounts for any RPS changes that occur while
+        waiting for the next request, so even short spikes affect traffic.
+
+        Unlike the default, it does not send a request immediately at t=0.
+        Without load spikes, both implementations generate the same
+        subsequent request times when using the same random seed.
         """
         end_at = s_to_ns(self.duration_s)
 
         def schedule_next(after: TimePoint):
             arrival = self._next_arrival_after(after, end_at)
             if arrival is not None:
-                sim.schedule(max(arrival, after + 1), arrive)
+                sim.schedule(max(arrival, after + 1), arrive)  # at least 1 ns apart, as by default
 
         def arrive():
             if sim.timestep >= end_at:
@@ -82,7 +92,12 @@ class Workload:
         schedule_next(0)
 
     def _next_rate_change(self, time: TimePoint, end_at: TimePoint) -> TimePoint:
-        """The first instant after `time` at which a load spike starts or ends, or `end_at`."""
+        """Find when the RPS might change next.
+
+        A load spike changes the RPS when it starts or ends.
+        Return the nearest such time, or end_at if there are no
+        more changes before the simulation ends.
+        """
         change = end_at
         for spike in self.load_spikes:
             for edge in (spike.duration.begin, spike.duration.end):
@@ -91,24 +106,40 @@ class Workload:
         return change
 
     def _next_arrival_after(self, time: TimePoint, end_at: TimePoint) -> Optional[TimePoint]:
-        """Draw the next arrival after `time`. None if it would land after `end_at`.
+        """Find the next random request time, accounting for load spikes.
 
-        One draw gives the number of expected arrivals that must pass before the next
-        request. The rate is constant between two spike edges, so each stretch supplies
-        `rate x length` of them, and the request lands in the stretch where they run out.
+        Normally, we would use the current RPS to calculate how long to
+        wait for the next request. However, if the RPS changes during
+        that wait, the calculated arrival time can be wrong.
 
-        Example: 1 request per second, and a spike of x1000 from 10.0 s to 10.1 s.
-        A draw of 5 is made at 9.0 s. The second before the spike supplies 1, so 4 are
-        left. The spike supplies 100, so the request lands 4 ms into it, at 10.004 s.
-        Drawing the whole gap at the rate of 9.0 s would put it at 14 s, after the spike.
+        Instead, we draw a random countdown. The higher the RPS, the
+        faster this countdown decreases. A new request arrives when it
+        reaches zero.
+
+        If the RPS changes before the countdown reaches zero, we
+        continue counting down using the new RPS.
+
+        For example:
+        - Normal traffic is 1 RPS.
+        - Traffic increases to 1000 RPS from 10.0s to 10.1s.
+        - At 9.0s, we draw a countdown of 5.
+        - By 10.0s, one second at 1 RPS reduces it from 5 to 4.
+        - At 1000 RPS, the remaining 4 take just 0.004 seconds.
+        - The next request therefore arrives at 10.004s.
+
+        The default implementation would instead calculate a 5-second
+        wait at 9.0s and schedule the request at 14.0s, completely
+        missing the spike.
+
+        Return None if no request arrives before the simulation ends.
         """
-        needed = self._rng.expovariate(1.0)
+        countdown = self._rng.expovariate(1.0)
         while time < end_at:
             rate = self.rps_at(time)
             change = self._next_rate_change(time, end_at)
-            supplied = rate * ns_to_s(change - time)
-            if rate > 0.0 and needed <= supplied:
-                return time + s_to_ns(needed / rate)
-            needed -= supplied
+            decrease = rate * ns_to_s(change - time)  # until the rate changes
+            if rate > 0.0 and countdown <= decrease:
+                return time + s_to_ns(countdown / rate)
+            countdown -= decrease
             time = change
         return None

@@ -1,9 +1,11 @@
 """
-With `exact_arrivals: true` a workload sends its requests as an exact Poisson process.
+With `exact_arrivals: true` a workload sends its requests at random times, with a rate
+that follows the load spikes exactly.
 
-By default the first request is sent at t = 0, and each gap is drawn with the rate at
-the previous arrival, so a load spike only takes effect at the next arrival. With the
-key set, the first request is drawn like every other, and a spike starts and ends on time.
+By default the first request is sent at t = 0. The gap to the next request is drawn with
+the rate at the time of the previous request, so a load spike only changes the rate at the
+first request after it starts. With `exact_arrivals: true`, the first request comes at a
+random time like all the others, and a load spike starts and ends exactly on time.
 """
 
 from simulator.config.loader import ConfigLoader
@@ -35,7 +37,7 @@ def test_by_default_the_first_request_is_sent_at_time_zero():
     assert arrival_times(Workload(base_rps=100, duration_s=1, rng_seed=7))[0] == 0
 
 
-def test_with_exact_arrivals_the_first_request_is_drawn():
+def test_with_exact_arrivals_the_first_request_comes_at_a_random_time():
     """At 100 requests per second the first request arrives after 10 ms on average."""
     firsts = [
         arrival_times(Workload(base_rps=100, duration_s=1, rng_seed=seed, exact_arrivals=True))[0]
@@ -63,9 +65,10 @@ def test_a_load_spike_starts_and_ends_on_time():
     assert count_between(times, 11, 21) < 30
 
 
-def test_a_spike_shorter_than_one_gap_still_brings_its_requests():
+def test_a_very_short_load_spike_still_gets_its_extra_requests():
     """1 request per second, and 1000 per second during 100 ms: about 100 requests arrive
-    in those 100 ms. By default the spike is usually over before the next gap is drawn."""
+    in those 100 ms. By default the spike is usually over before the next request, so the
+    default never notices it."""
     load_spikes = [spike(10.0, 10.1, 1000)]
     exact = [
         count_between(arrival_times(Workload(1, 20, load_spikes, seed, exact_arrivals=True)), 10.0, 10.1)

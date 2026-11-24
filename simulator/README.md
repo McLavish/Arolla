@@ -190,35 +190,43 @@ workload:
 
 ### Service Dependencies
 
+Services can call other services while processing a request. You can configure how these calls are executed, how failures are handled, and when the service performs its own work.
+
 ```yaml
 services:
   - name: api
     dependencies:
       - service: db
       - service: cache
-        optional: true                  # a failed optional call does not fail the request
+        optional: true                  # A failure does not fail the request
     dependency_call_pattern: parallel   # sequential (default) | parallel
     dependency_join: fail_fast          # wait_all (default) | fail_fast
     local_work: first                   # last (default) | first
 ```
 
-With `fail_fast` a service gives up at the first failed parallel call instead of
-waiting for every call to answer. The other calls keep running.
-
-By default a service calls its dependencies and then does its own work. With
-`local_work: first` it does its own work before the calls.
+- **`dependency_call_pattern`** controls whether dependencies are called one after another (`sequential`) or at the same time (`parallel`).
+- **`dependency_join`** controls how the service waits for parallel calls. With `wait_all`, it waits for every call to finish. With `fail_fast`, it stops waiting as soon as a required dependency fails. Any other calls already in progress continue running.
+- **`local_work`** controls when the service performs its own work. By default (`last`), it calls its dependencies first. With `first`, it completes its own work before calling them.
+- **`optional`** determines whether a dependency failure causes the request to fail. If set to `true`, a failure of that dependency does not fail the request.
 
 ### Exact Arrivals
 
-By default every client sends its first request at t = 0, and a load spike only
-takes effect at the next arrival. With `exact_arrivals` the first request is drawn
-like every other, and a spike starts and ends exactly on time:
+By default, the workload generates its first request at `t = 0`. Each subsequent request is scheduled using the RPS at the time of the previous request. If the RPS changes before the next request arrives, its scheduled arrival time is not updated. As a result, short load spikes may be missed entirely.
+
+Setting `exact_arrivals: true` changes this behavior:
+
+- The first request arrives after a random delay instead of immediately at `t = 0`.
+- Changes in RPS take effect at their configured times, even when they occur between requests.
+- Request arrivals remain random, but their timing correctly accounts for load spikes.
 
 ```yaml
 workload:
   base_rps: 300
   duration_s: 120
   exact_arrivals: true
+```
+
+Use `exact_arrivals: true` when you want traffic generation to accurately reflect short or rapidly changing load spikes.
 ```
 
 ### Multi-Client Mode
@@ -246,9 +254,11 @@ clients:
 
 ### Deadline Propagation
 
-A client's `timeout.attempt_ms` is its own: by default the service keeps working on
-a call the client has given up on. With `propagate_deadline` the service is told
-the deadline and stops working on the call at that moment:
+Deadline propagation controls whether a service and its dependencies stop processing a request when the caller's timeout expires.
+
+By default, when a client times out, it stops waiting for a response, but the service continues processing the request. This can waste resources on requests whose results are no longer needed.
+
+Setting `propagate_deadline: true` on a client changes this behavior. The client passes its deadline to the service, which stops processing the request when that deadline is reached.
 
 ```yaml
 clients:
@@ -259,9 +269,13 @@ clients:
     propagate_deadline: true
 ```
 
-A service already passes its own attempt deadline on to its dependencies. With
-`propagate_deadline: false` on a service it does not: the service still gives up at
-its deadline, but its dependencies keep working on the call.
+In this example, if the request takes longer than 100 ms, the client times out and the service stops processing it.
+
+**Deadline propagation between services**
+
+By default, services also pass their own attempt deadlines to their dependencies. This ensures that dependencies stop working when the calling service's deadline expires.
+
+Setting `propagate_deadline: false` on a service disables this behavior. The service still stops waiting when its own deadline expires, but its dependencies continue processing their calls, even though their results are no longer needed.
 
 ### Parameter Sweeps
 

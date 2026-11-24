@@ -207,9 +207,6 @@ class _ServiceAttemptMixin:
         retry_budget_remaining: Optional[list],
         tenant_id: Optional[str],
     ):
-        """Call the dependencies, then do the service's own work, or the other way round with
-        `local_work_first`. The worker is held throughout. The attempt ends at the first step
-        that fails or reaches the deadline."""
         start_t = sim.timestep
 
         def report(success: bool, reason: DropReason):
