@@ -192,9 +192,6 @@ class _ServiceAttemptMixin:
             start_t = sim.timestep
 
             def on_all_deps_done(all_success: bool, worst_reason: DropReason):
-                # A failed optional call can answer after the deadline: a call that waits
-                # in a queue is only reported when a worker reaches it. The attempt has
-                # then timed out. (Exactly at the deadline, the code below reports it.)
                 if all_success and attempt_deadline is not None and sim.timestep > attempt_deadline:
                     all_success, worst_reason = False, DropReason.DEADLINE
                 if not all_success:
@@ -231,10 +228,6 @@ class _ServiceAttemptMixin:
 
                 sim.schedule(expiry, finish_after_deps)
 
-            # Send the calls as the next event, not from inside this one. This attempt may
-            # be starting while a dependency is still reporting a finished call: it has
-            # freed the worker but not yet looked at its own queue. A call sent now would
-            # take that worker ahead of the calls already waiting there.
             sim.schedule(sim.timestep, partial(
                 self._call_dependencies,
                 sim, on_all_deps_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id,
