@@ -308,7 +308,7 @@ class ServiceConfigYAML(BaseModel):
     )
     local_work: LocalWork = Field(
         default=LocalWork.LAST,
-        description="The service performs its service time (work) before making calls to dependencies (last) or before calling the dependencies (first)",
+        description="The service performs its service time (work) before calling the dependencies (first) or after making calls to dependencies (last)",
     )
     propagate_deadline: bool = Field(
         default=True,

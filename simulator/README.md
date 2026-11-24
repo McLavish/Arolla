@@ -227,7 +227,6 @@ workload:
 ```
 
 Use `exact_arrivals: true` when you want traffic generation to accurately reflect short or rapidly changing load spikes.
-```
 
 ### Multi-Client Mode
 
