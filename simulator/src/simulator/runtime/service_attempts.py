@@ -182,56 +182,10 @@ class _ServiceAttemptMixin:
 
         self.in_flight += 1
 
-        if self.dependencies and self.local_work_first:
-            self._work_then_call_dependencies(
+        if self.dependencies:
+            self._serve_with_dependencies(
                 sim, on_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id
             )
-            return
-
-        if self.dependencies:
-            start_t = sim.timestep
-
-            def on_all_deps_done(all_success: bool, worst_reason: DropReason):
-                if all_success and attempt_deadline is not None and sim.timestep > attempt_deadline:
-                    all_success, worst_reason = False, DropReason.DEADLINE
-                if not all_success:
-                    total_time = sim.timestep - start_t
-                    self.in_flight -= 1
-                    on_done(False, total_time, worst_reason, len(self.queue))
-                    self._start_next(sim)
-                    return
-
-                service_time = self._sample_service_time(sim.timestep, sim)
-                expiry = (
-                    min(sim.timestep + service_time, attempt_deadline)
-                    if attempt_deadline is not None
-                    else sim.timestep + service_time
-                )
-
-                def finish_after_deps():
-                    total_time = sim.timestep - start_t
-                    local_failed = self._fails_now(sim.timestep, sim)
-                    timed_out = (
-                        attempt_deadline is not None and sim.timestep >= attempt_deadline
-                    )
-
-                    self.in_flight -= 1
-                    if timed_out:
-                        on_done(False, total_time, DropReason.DEADLINE, len(self.queue))
-                    elif local_failed:
-                        on_done(
-                            False, total_time, DropReason.SERVER_FAILURE, len(self.queue)
-                        )
-                    else:
-                        on_done(True, total_time, DropReason.NONE, len(self.queue))
-                    self._start_next(sim)
-
-                sim.schedule(expiry, finish_after_deps)
-
-            sim.schedule(sim.timestep, partial(
-                self._call_dependencies,
-                sim, on_all_deps_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id,
-            ))
             return
 
         service_time = self._sample_service_time(sim.timestep, sim)
@@ -244,7 +198,7 @@ class _ServiceAttemptMixin:
             expiry, partial(self._finish_service, sim, on_done, service_time, attempt_deadline)
         )
 
-    def _work_then_call_dependencies(
+    def _serve_with_dependencies(
         self,
         sim: Simulator,
         on_done: Callable[[bool, TimeDuration, DropReason, int], None],
@@ -253,39 +207,56 @@ class _ServiceAttemptMixin:
         retry_budget_remaining: Optional[list],
         tenant_id: Optional[str],
     ):
-        """The service does its own work first and then calls its dependencies. It keeps
-        its worker until the last call has answered.
-
-        If the work fails or runs past the deadline, the dependencies are never called.
-        """
+        """Call the dependencies, then do the service's own work, or the other way round with
+        `local_work_first`. The worker is held throughout. The attempt ends at the first step
+        that fails or reaches the deadline."""
         start_t = sim.timestep
-        work_ends = start_t + self._sample_service_time(start_t, sim)
-        if attempt_deadline is not None:
-            work_ends = min(work_ends, attempt_deadline)
 
         def report(success: bool, reason: DropReason):
             self.in_flight -= 1
             on_done(success, sim.timestep - start_t, reason, len(self.queue))
             self._start_next(sim)
 
-        def on_calls_done(all_success: bool, reason: DropReason):
-            # A failed optional call can use up the whole deadline without failing the attempt.
-            if all_success and attempt_deadline is not None and sim.timestep >= attempt_deadline:
+        def timed_out() -> bool:
+            return attempt_deadline is not None and sim.timestep >= attempt_deadline
+
+        def do_work(then: Callable[[], None]):
+            work_ends = sim.timestep + self._sample_service_time(sim.timestep, sim)
+            if attempt_deadline is not None:
+                work_ends = max(sim.timestep, min(work_ends, attempt_deadline))
+
+            def work_done():
+                failed = self._fails_now(sim.timestep, sim)  # drawn even after the deadline
+                if timed_out():
+                    report(False, DropReason.DEADLINE)
+                elif failed:
+                    report(False, DropReason.SERVER_FAILURE)
+                else:
+                    then()
+
+            sim.schedule(work_ends, work_done)
+
+        def call_dependencies(then: Callable[[], None]):
+            def calls_done(all_success: bool, reason: DropReason):
+                if all_success:
+                    then()
+                else:
+                    report(False, reason)
+
+            self._call_dependencies(
+                sim, calls_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id
+            )
+
+        def finish():
+            if timed_out():
                 report(False, DropReason.DEADLINE)
             else:
-                report(all_success, reason)
+                report(True, DropReason.NONE)
 
-        def on_work_done():
-            if attempt_deadline is not None and sim.timestep >= attempt_deadline:
-                report(False, DropReason.DEADLINE)
-            elif self._fails_now(sim.timestep, sim):
-                report(False, DropReason.SERVER_FAILURE)
-            else:
-                self._call_dependencies(
-                    sim, on_calls_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id
-                )
-
-        sim.schedule(work_ends, on_work_done)
+        if self.local_work_first:
+            do_work(then=lambda: call_dependencies(then=finish))
+        else:
+            sim.schedule(sim.timestep, lambda: call_dependencies(then=lambda: do_work(then=finish)))
 
     def _finish_service(
         self,
