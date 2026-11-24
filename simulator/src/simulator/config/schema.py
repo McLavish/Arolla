@@ -253,15 +253,15 @@ class DependencyCallPattern(str, Enum):
 
 
 class DependencyJoin(str, Enum):
-    """When a service with parallel dependencies gives up on its attempt"""
-    WAIT_ALL = "wait_all"    # after every call has answered
-    FAIL_FAST = "fail_fast"  # as soon as one required call has failed
+    """When a service with parallel dependencies aborts its attempt"""
+    WAIT_ALL = "wait_all"    # after every call
+    FAIL_FAST = "fail_fast"  # as soon as one required call fails
 
 
 class LocalWork(str, Enum):
-    """When a service with dependencies does its own work"""
-    LAST = "last"    # after its calls have answered
-    FIRST = "first"  # before it calls its dependencies
+    """When a service with dependencies executes local work (service time) relative to its calls to dependencies"""
+    LAST = "last"    # after the calls have returned
+    FIRST = "first"  # before the calls to dependencies
 
 
 class DependencyConfig(BaseModel):
@@ -304,15 +304,15 @@ class ServiceConfigYAML(BaseModel):
     
     dependency_join: DependencyJoin = Field(
         default=DependencyJoin.WAIT_ALL,
-        description="Parallel dependencies: give up after every call has answered, or at the first failed call",
+        description="Parallel dependencies: abort after every call has returned, or at the first failed result",
     )
     local_work: LocalWork = Field(
         default=LocalWork.LAST,
-        description="A service with dependencies does its own work after its calls (last) or before them (first)",
+        description="The service performs its service time (work) before making calls to dependencies (last) or before calling the dependencies (first)",
     )
     propagate_deadline: bool = Field(
         default=True,
-        description="Pass the service's attempt deadline on to its dependencies. If false, they keep working after the service has given up",
+        description="Pass the attempt deadline of the service request on to its dependencies. If false, dependencies keep working after the service has given up",
     )
 
     # Legacy single-dependency field (deprecated, auto-converted to dependencies)
@@ -347,7 +347,7 @@ class WorkloadConfig(BaseModel):
     rng_seed: Optional[int] = Field(default=None, description="RNG seed for reproducibility")
     exact_arrivals: bool = Field(
         default=False,
-        description="Exact Poisson arrivals: no request forced at t = 0, load spikes start and end on time",
+        description="Exact Poisson arrivals, with load spikes starting and ending on time",
     )
 
 
@@ -371,7 +371,7 @@ class ClientConfigYAML(BaseModel):
 
     propagate_deadline: bool = Field(
         default=False,
-        description="Tell the service the client's attempt deadline, so it stops working on a call when attempt_ms runs out",
+        description="Propagate the client attempt deadline to the target service. The service stops working on a call when attempt_ms runs out",
     )
 
     @field_validator("circuit_breaker")

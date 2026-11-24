@@ -102,7 +102,6 @@ class ClientRuntime:
                     partial(self._on_local_timeout, ctx, sim, call, begin_time),
                 )
                 if self.cfg.propagate_deadline:
-                    # The service stops working on the call when the client stops waiting.
                     if deadline_for_service is None or gives_up_at < deadline_for_service:
                         deadline_for_service = gives_up_at
 
