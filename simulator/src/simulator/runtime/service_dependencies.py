@@ -161,12 +161,14 @@ class _ServiceDependencyMixin:
             if not result.success and not is_optional:
                 on_all_done(False, result.drop_reason)
                 return
-            self._call_deps_sequential(
+            # As the next event, for the same reason as the first call (see `_begin_service`).
+            sim.schedule(sim.timestep, partial(
+                self._call_deps_sequential,
                 sim, deps, optionality, idx + 1, on_all_done, deadline, is_retry,
                 retry_budget_remaining=retry_budget_remaining,
                 tenant_id=tenant_id,
                 gave_up=gave_up,
-            )
+            ))
 
         deps[idx].submit_call(
             sim,

@@ -226,9 +226,14 @@ class _ServiceAttemptMixin:
 
                 sim.schedule(expiry, finish_after_deps)
 
-            self._call_dependencies(
-                sim, on_all_deps_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id
-            )
+            # Send the calls as the next event, not from inside this one. This attempt may
+            # be starting while a dependency is still reporting a finished call: it has
+            # freed the worker but not yet looked at its own queue. A call sent now would
+            # take that worker ahead of the calls already waiting there.
+            sim.schedule(sim.timestep, partial(
+                self._call_dependencies,
+                sim, on_all_deps_done, attempt_deadline, is_retry, retry_budget_remaining, tenant_id,
+            ))
             return
 
         service_time = self._sample_service_time(sim.timestep, sim)
