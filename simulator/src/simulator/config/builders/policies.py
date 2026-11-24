@@ -30,6 +30,7 @@ from simulator.policies.retry import (
     JitterMode as PolicyJitterMode,
 )
 from simulator.policies.retry_controls import (
+    RateLimitedRetryPolicy,
     RetryBudgetPolicy,
     RetryCircuitBreakerPolicy,
     TimeBasedCircuitBreakerPolicy,
@@ -254,6 +255,10 @@ def build_client_retry_policy(
     policy = build_retry_policy(client_cfg_yaml.retry, rng)
     if policy is None:
         return None
+
+    if client_cfg_yaml.rate_limiter is not None:
+        # Innermost, so that a retry the breaker or the budget refuses is not counted by the limiter.
+        policy = RateLimitedRetryPolicy(policy, build_rate_limiter(client_cfg_yaml.rate_limiter))
 
     if client_cfg_yaml.circuit_breaker is not None:
         cb_cfg = client_cfg_yaml.circuit_breaker

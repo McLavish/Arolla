@@ -129,6 +129,28 @@ services:
       max_delay_ms: 1000
 ```
 
+### Rate Limiters
+
+A rate limiter caps how fast retries are sent. On a service it limits the service's own retries. On a client it limits the client's retries, so the client needs a `retry` policy.
+
+```yaml
+clients:
+  - name: client_a
+    retry:
+      type: fixed
+      max_attempts: 3
+      delay_ms: 10
+    rate_limiter:
+      type: bursty               # leaky | bursty | fixed_window
+      max_requests: 20           # Retries that can be sent in one burst
+      refill_rate: 5             # Retries earned back per period
+      period_ms: 1000
+```
+
+- `bursty`: a retry takes one token from a bucket of `max_requests` tokens. The bucket earns `refill_rate` tokens back per period. When it is empty, the retry is not sent and the request fails.
+- `fixed_window`: at most `max_requests` retries are sent in each period. Any further retry in the same period is not sent and the request fails.
+- `leaky`: retries are sent at least `period_ms / max_requests` apart. A retry that comes too early waits for its turn. `max_attempts` limits the attempts of one request (default: `max_requests`).
+
 ### Adding Global Retry Budget
 
 Server-side token bucket that limits retries globally:

@@ -60,6 +60,25 @@ class RetryBudgetPolicy(RetryPolicy):
         return is_retry
 
 
+@dataclass
+class RateLimitedRetryPolicy(RetryPolicy):
+    """A client's retry policy behind a rate limiter. A retry that the policy grants
+    also needs the limiter's permission, and waits longer if the limiter says so."""
+
+    inner: RetryPolicy
+    limiter: LoadLimiter
+
+    def next_delay(self, context: RetryContext) -> Tuple[bool, TimeDuration]:
+        allowed, delay = self.inner.next_delay(context)
+        if not allowed:
+            return False, 0
+        allowed, limiter_delay = self.limiter.next_delay(context)
+        return allowed, max(delay, limiter_delay)
+
+    def record_attempt(self, context: RetryContext, success: bool):
+        self.inner.record_attempt(context, success)
+
+
 class CircuitBreakerState(Enum):
     CLOSED = 1
     OPEN = 2

@@ -363,6 +363,7 @@ class ClientConfigYAML(BaseModel):
     retry: Optional[RetryConfig] = Field(default=None, description="Client-side retry policy")
     timeout: Optional[TimeoutConfig] = Field(default=None, description="Client-side timeout policy")
     circuit_breaker: Optional[CircuitBreakerConfig] = Field(default=None, description="Client-side circuit breaker")
+    rate_limiter: Optional[RateLimiterConfig] = Field(default=None, description="Client-side rate limiter for the client's retries")
     retry_budget: Optional[RetryBudgetConfig] = Field(default=None, description="Client-side retry budget")
     e2e_retry_budget: Optional[int] = Field(default=None, ge=0, description="Arolla Level 2: max retries across all hops")
     replicas: Union[Annotated[int, Field(ge=1)], List[Annotated[int, Field(ge=1)]]] = Field(
@@ -383,6 +384,12 @@ class ClientConfigYAML(BaseModel):
                 "count_based is only available on services"
             )
         return v
+
+    @model_validator(mode="after")
+    def _rate_limiter_needs_a_retry_policy(self):
+        if self.rate_limiter is not None and self.retry is None:
+            raise ValueError(f"client {self.name!r}: rate_limiter limits the client's retries, so it needs retry")
+        return self
 
     @model_validator(mode="after")
     def _propagated_deadline_needs_a_timeout(self):
