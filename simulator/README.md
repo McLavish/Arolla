@@ -298,6 +298,28 @@ By default, services also pass their own attempt deadlines to their dependencies
 
 Setting `propagate_deadline: false` on a service disables this behavior. The service still stops waiting when its own deadline expires, but its dependencies continue processing their calls, even though their results are no longer needed.
 
+### Adaptive Timeout
+
+By default, `timeout.attempt_ms` is a fixed value. With `type: adaptive`, the attempt timeout follows the latency of recent attempts: it is a percentile of the recent successful attempts, multiplied by a safety margin. This works on a client and on a service. `global_ms` stays fixed.
+
+```yaml
+clients:
+  - name: client_a
+    timeout:
+      type: adaptive
+      attempt_ms: 100            # Starting value, used until min_samples attempts have succeeded
+      target_percentile: 0.95    # Follow the p95 latency ...
+      safety_margin: 2.0         # ... multiplied by 2
+      window_size: 100           # Percentile over the last 100 successful attempts
+      min_samples: 10
+      min_ms: 1                  # The timeout stays between min_ms and max_ms
+      max_ms: 500
+      success_rate_window: 50    # When fewer than half of the last 50 attempts succeed,
+      min_success_rate: 0.5      # the timeout is raised further, up to 10 times
+```
+
+Only `type` is required. The values above are the defaults, except `attempt_ms` and `max_ms`, which are not set by default.
+
 ### Parameter Sweeps
 
 Use inline lists to sweep over parameter values:

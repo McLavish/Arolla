@@ -17,6 +17,7 @@ from simulator.config.schema import (
     RetryPolicyType,
     ArollaRetryBudgetConfig,
     TimeoutConfig,
+    TimeoutType,
     GlobalRetryBudgetConfig,
     ClientConfigYAML,
 )
@@ -41,7 +42,7 @@ from simulator.policies.retry_controls import (
     AIMDGlobalRetryBudget,
     GoodputCoupledRetryBudget,
 )
-from simulator.policies.timeout import Timeout, StaticTimeout
+from simulator.policies.timeout import AdaptiveTimeout, Timeout, StaticTimeout
 from simulator.policies.load_limiter import (
     LoadLimiter,
     LeakyRateLimiterPolicy,
@@ -95,6 +96,19 @@ def build_timeout_policy(cfg: Optional[TimeoutConfig]) -> Optional[Timeout]:
 
     global_timeout = ms_to_ns(cfg.global_ms) if cfg.global_ms is not None else None
     attempt_timeout = ms_to_ns(cfg.attempt_ms) if cfg.attempt_ms is not None else None
+    if cfg.type == TimeoutType.ADAPTIVE:
+        return AdaptiveTimeout(
+            initial_global_timeout=global_timeout,
+            initial_attempt_timeout=attempt_timeout,
+            target_percentile=cfg.target_percentile,
+            safety_margin=cfg.safety_margin,
+            min_samples=cfg.min_samples,
+            window_size=cfg.window_size,
+            min_timeout=ms_to_ns(cfg.min_ms),
+            max_timeout=ms_to_ns(cfg.max_ms) if cfg.max_ms is not None else None,
+            success_rate_window=cfg.success_rate_window,
+            min_success_rate=cfg.min_success_rate,
+        )
     return StaticTimeout(global_timeout=global_timeout, attempt_timeout=attempt_timeout)
 
 

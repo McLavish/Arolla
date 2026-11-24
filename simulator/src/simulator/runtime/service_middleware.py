@@ -23,6 +23,8 @@ class _ServiceMiddlewareMixin:
     ):
         """Handle completion of a single attempt using middleware composition."""
         end_time = sim.timestep
+        if self.cfg.timeout is not None:
+            self.cfg.timeout.record_result(success, end_time - begin_time)
 
         if self._record_events:
             self._events.append(

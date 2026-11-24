@@ -38,9 +38,15 @@ class StaticTimeout(Timeout):
         pass
 
 
-"""NOT YET USED"""
 @dataclass
 class AdaptiveTimeout(Timeout):
+    """An attempt timeout that follows the latency of the recent successful attempts.
+
+    Example with the defaults: the 95th percentile of the last 100 successful attempts
+    is 40 ms, so the next attempt gets 2 * 40 = 80 ms. While fewer than half of the last
+    50 attempts succeed, the timeout is raised further, up to 10 times.
+    """
+
     # Configuration
     initial_global_timeout: Optional[TimeDuration] = None
     initial_attempt_timeout: Optional[TimeDuration] = None
@@ -97,19 +103,21 @@ class AdaptiveTimeout(Timeout):
 
     def _update_timeouts(self) -> None:
         """Update current timeout values based on collected metrics"""
-        percentile_timeout = self._calculate_percentile_timeout()
+        timeout = self._calculate_percentile_timeout()
         success_rate = self._get_success_rate()
 
-        if percentile_timeout is not None:
-            # If success rate is low, increase timeout
-            if success_rate < self.min_success_rate:
-                success_adjustment = 1.0 / max(success_rate, 0.1)
-                adjusted_timeout = int(percentile_timeout * success_adjustment)
-            else:
-                adjusted_timeout = percentile_timeout
+        if timeout is None:
+            # Too few successes for a percentile, for example because the starting timeout
+            # is too short. The timeout can then only be raised, from its starting value.
+            timeout = self.initial_attempt_timeout
+            if timeout is None or success_rate >= self.min_success_rate:
+                return
 
-            # Update attempt timeout
-            self._current_attempt_timeout = adjusted_timeout
+        if success_rate < self.min_success_rate:
+            timeout = int(timeout / max(success_rate, 0.1))
+            if self.max_timeout is not None:
+                timeout = min(timeout, self.max_timeout)
+        self._current_attempt_timeout = timeout
 
     def get_global_timeout(self) -> Optional[TimeDuration]:
         return self._current_global_timeout
@@ -119,6 +127,7 @@ class AdaptiveTimeout(Timeout):
 
     def record_result(self, success: bool, latency: TimeDuration) -> None:
         """Record result and update timeout values"""
-        self._latencies.append(latency)
+        if success:  # how long a failed attempt took says little about how long a success takes
+            self._latencies.append(latency)
         self._successes.append(success)
         self._update_timeouts()

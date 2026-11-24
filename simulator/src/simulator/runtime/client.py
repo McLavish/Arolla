@@ -209,9 +209,8 @@ class ClientRuntime:
         req.queue_size_at_end = queue_size
         ctx.root.add_attempt(req)
 
-        # Report the latency to the service timeout policy (for CSV parity).
-        if self.service.cfg.timeout is not None:
-            self.service.cfg.timeout.record_result(success, req.interval.end - req.interval.begin)
+        if self.cfg.timeout is not None:
+            self.cfg.timeout.record_result(success, req.interval.end - req.interval.begin)
 
         if self.cfg.retry is None:
             return
