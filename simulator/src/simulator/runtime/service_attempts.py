@@ -192,6 +192,11 @@ class _ServiceAttemptMixin:
             start_t = sim.timestep
 
             def on_all_deps_done(all_success: bool, worst_reason: DropReason):
+                # A failed optional call can answer after the deadline: a call that waits
+                # in a queue is only reported when a worker reaches it. The attempt has
+                # then timed out. (Exactly at the deadline, the code below reports it.)
+                if all_success and attempt_deadline is not None and sim.timestep > attempt_deadline:
+                    all_success, worst_reason = False, DropReason.DEADLINE
                 if not all_success:
                     total_time = sim.timestep - start_t
                     self.in_flight -= 1
