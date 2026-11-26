@@ -305,19 +305,19 @@ Run with: `python bin/workflow.py config.yaml` (auto-detects sweeps).
 ## Tests
 
 ```bash
-# Unit tests, from simulator/
+# Unit tests (from simulator/)
 PYTHONPATH=src python -m pytest -q
 
-# Shipped scenarios, from the repository root: compare this branch with main
+# Scenario tests (from the repository root)
 git worktree add ../arolla-main main
 python simulator/bin/check_scenarios.py ../arolla-main .
 ```
 
-`bin/check_scenarios.py` runs every scenario in `experiments/yaml` with the code of both
-checkouts and lists the scenarios whose results differ. GitHub runs both checks on every
-pull request that changes `simulator/`. A change that is meant to change results, such as
-a bug fix, fails the scenario check; the pull request should then say which scenarios
-change and why.
+`bin/check_scenarios.py` runs all scenarios in `experiments/yaml` using both versions of the code and
+reports which scenarios produce different results. 
+GitHub Actions runs both checks on every pull request that modifies `simulator/`.
+If a change affects the results of a scenario, the scenario check fails. The pull request must document
+which scenarios are affected and why.
 
 ## Capacity Planning
 

@@ -1,22 +1,19 @@
-"""Check that a change to the simulator keeps the results of the shipped scenarios.
+"""Check for changes in simulator behaviour.
 
+Usage:
     python simulator/bin/check_scenarios.py OLD_CHECKOUT NEW_CHECKOUT [--jobs N]
 
-Both arguments are checkouts of the repository, for example `main` and a pull request.
-Every scenario in OLD_CHECKOUT/simulator/experiments/yaml is run once with the simulator
-code of each checkout. The script lists the scenarios whose results differ, and exits
-with an error if there is at least one.
+Run the scenarios from OLD_CHECKOUT/simulator/experiments/yaml using both
+versions of the simulator. Report differences and exit with status 1 if
+any results differ.
 
-The results of a run are every attempt each client saw (start, end, success, reason),
-every attempt each service recorded, and the state of each service's random generator
-at the end. A change that does not change the behaviour, such as a refactor or a new
-option that is off by default, gives exactly the same results.
+Compare client attempts, service events, queue state, admission statistics,
+random generator states and simulation end times.
 
-To keep the check short, each scenario sends requests for at most 10 seconds (less for
-a very busy one), and a sweep is cut to its first 60 combinations.
+Limit workload durations to 10 seconds, reducing them further based on
+the request rate. Test at most 60 combinations per parameter sweep.
 
-The script reads some internals of the simulator (`client.roots`, `service._events`,
-`service._rng`). If those change, the script has to change with them.
+Depends on simulator internals: client.roots, service._events and service._rng.
 """
 
 import copy
@@ -38,9 +35,9 @@ MAX_SWEEP_POINTS = 60
 
 
 def scenario_points(checkout: Path):
-    """Every scenario to run, as (name, config): one per file, or one per sweep combination."""
+    """Expand scenario files and parameter sweeps into (name, config) pairs."""
     sys.path.insert(0, str(checkout / "simulator/bin"))
-    import run_sweep  # the sweep helpers of OLD_CHECKOUT
+    import run_sweep  # Use the sweep helpers from the old checkout.
 
     points = []
     for path in sorted((checkout / "simulator/experiments/yaml").rglob("*.yaml")):
@@ -61,8 +58,7 @@ def scenario_points(checkout: Path):
 
 
 def shorten(config):
-    """Cut every workload to MAX_SECONDS, or to fewer seconds if the scenario would send
-    more than MAX_REQUESTS requests. Example: at 100 000 requests per second, 3 seconds."""
+    """Limit workload duration based on MAX_SECONDS and MAX_REQUESTS."""
     clients = config.get("clients") or []
     workloads = [client["workload"] for client in clients]
     rps = sum(client["workload"]["base_rps"] * client.get("replicas", 1) for client in clients)
@@ -75,9 +71,9 @@ def shorten(config):
 
 
 def run_point(point):
-    """Run one scenario and return a hash of its results, or the error it raised."""
+    """Return the scenario name and a hash of its results, or an error message."""
     name, config = point
-    sys.setrecursionlimit(1_000_000)  # long chains of callbacks in the busiest scenarios
+    sys.setrecursionlimit(1_000_000)  # Accommodate long callback chains.
     from simulator.config.loader import ConfigLoader
     from simulator.config.schema import ExperimentConfig
 
@@ -86,7 +82,7 @@ def run_point(point):
         for client, workload in zip(clients, workloads):
             workload.drive(sim, lambda s, c=client: c.start_request(s))
         sim.run()
-    except Exception as error:  # a scenario that fails must show up in the report
+    except Exception as error:
         return name, f"error: {type(error).__name__}: {error}"
 
     digest = hashlib.sha256()
@@ -111,7 +107,7 @@ def run_point(point):
 
 
 def results_of(checkout: Path, points_file: str, jobs: int):
-    """Run every scenario with the code of `checkout`, in a fresh Python process."""
+    """Run the scenarios in a separate process using the specified simulator version."""
     env = dict(os.environ, PYTHONPATH=str(checkout / "simulator/src"))
     results_file = points_file + ".results"
     command = [sys.executable, __file__, "--run", points_file, results_file, str(jobs)]
@@ -132,7 +128,7 @@ def report(lines):
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
-    if sys.argv[1] == "--run":  # inside `results_of`: run the points, write the results
+    if sys.argv[1] == "--run":  # Subprocess entry point
         points = json.load(open(sys.argv[2]))
         with ProcessPoolExecutor(max_workers=int(sys.argv[4])) as pool:
             results = dict(pool.map(run_point, points, chunksize=1))
@@ -150,14 +146,14 @@ def main():
 
     changed = [name for name, _ in points if before[name] != after[name]]
     failing = [name for name, _ in points if after[name].startswith("error")]
-    lines = [f"### Shipped scenarios: {len(points)} compared, {len(changed)} with different results"]
+    lines = [f"### Scenario tests: {len(points)} of {len(changed)} produced different results"]
     lines += [f"- `{name}`" for name in changed]
     if failing:
         lines += ["", f"{len(failing)} scenarios fail with the new code:"]
         lines += [f"- `{name}`: {after[name]}" for name in failing]
     if changed:
-        lines += ["", "If the change is meant to change results (a bug fix, for example), "
-                      "say in the pull request which scenarios change and why."]
+        lines += ["", "For intentional changes in simulator behaviour, "
+                      "document the affected scenarios and reasons in the pull request."]
     report(lines)
     sys.exit(1 if changed else 0)
 
