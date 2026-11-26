@@ -103,7 +103,7 @@ class TimeoutConfig(BaseModel):
         if self.type == TimeoutType.ADAPTIVE:
             start = self.attempt_ms if self.attempt_ms is not None else self.min_ms
             if not self.min_ms <= start <= (self.max_ms if self.max_ms is not None else start):
-                raise ValueError("anadaptive timeout needs min_ms <= attempt_ms <= max_ms")
+                raise ValueError("an adaptive timeout needs min_ms <= attempt_ms <= max_ms")
             if self.min_samples > self.window_size:
                 raise ValueError("an adaptive timeout needs min_samples <= window_size")
         return self
