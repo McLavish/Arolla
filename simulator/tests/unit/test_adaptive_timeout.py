@@ -1,10 +1,9 @@
 """
-An adaptive timeout follows the latency of the recent successful attempts.
+Test adaptive attempt timeouts.
 
-Example used below, with the default settings. The last successful attempts all
-took 40 ms, so their 95th percentile is 40 ms and the next attempt gets
-2 * 40 = 80 ms. The timeout starts at `attempt_ms` and keeps that value until 10
-attempts have succeeded.
+The timeout starts at attempt_ms and adapts after 10 successful attempts.
+By default, it is twice the p95 latency of recent successful attempts.
+For example, a p95 latency of 40 ms yields a timeout of 80 ms.
 """
 
 import pytest
@@ -26,7 +25,10 @@ def record(timeout, successes=0, failures=0, latency_ms=40):
 
 
 def test_the_timeout_follows_the_latency_of_successful_attempts():
-    """The example at the top of this file."""
+    """Test that the timeout follows the latency of the successful attempts.
+
+    The example at the top of this file.
+    """
     timeout = AdaptiveTimeout(initial_attempt_timeout=ms_to_ns(100))
 
     record(timeout, successes=9)
@@ -36,32 +38,42 @@ def test_the_timeout_follows_the_latency_of_successful_attempts():
 
 
 def test_the_global_timeout_does_not_change():
+    """Test that the global timeout does not change"""
     timeout = AdaptiveTimeout(initial_global_timeout=ms_to_ns(500), initial_attempt_timeout=ms_to_ns(100))
     record(timeout, successes=20)
     assert timeout.get_global_timeout() == ms_to_ns(500)
 
 
 def test_failed_attempts_do_not_shorten_the_timeout():
-    """A failed attempt can be very short, for example when the queue is full. Here the
+    """Test that failed attempts do not shorten the timeout.
+
+    A failed attempt can be very short, for example when the queue is full. Here the
     timeout follows the median. After 10 successes of 40 ms and 10 failures of 0 ms,
-    the median is still 40 ms and the timeout is still 80 ms."""
+    the median is still 40 ms and the timeout is still 80 ms.
+    """
     timeout = AdaptiveTimeout(initial_attempt_timeout=ms_to_ns(100), target_percentile=0.5)
     record(timeout, successes=10, failures=10)
     assert timeout_ms(timeout) == 80
 
 
 def test_a_low_success_rate_raises_the_timeout():
-    """10 of the last 40 attempts succeeded: a success rate of 0.25, which is below 0.5.
-    The timeout of 80 ms is divided by 0.25, which gives 320 ms."""
+    """Test that a low success rate raises the timeout.
+
+    10 of the last 40 attempts succeeded: a success rate of 0.25, which is below 0.5.
+    The timeout of 80 ms is divided by 0.25, which gives 320 ms.
+    """
     timeout = AdaptiveTimeout(initial_attempt_timeout=ms_to_ns(100))
     record(timeout, successes=10, failures=30)
     assert timeout_ms(timeout) == 320
 
 
 def test_a_starting_value_that_is_too_short_is_raised():
-    """With a starting value of 10 ms every attempt times out, so there is never a
+    """Test that a starting value that is too short is raised.
+
+    With a starting value of 10 ms every attempt times out, so there is never a
     success to learn from. The timeout is raised to 10 times its starting value,
-    and no further."""
+    and no further.
+    """
     timeout = AdaptiveTimeout(initial_attempt_timeout=ms_to_ns(10))
     record(timeout, failures=1)
     assert timeout_ms(timeout) == 100
@@ -70,6 +82,7 @@ def test_a_starting_value_that_is_too_short_is_raised():
 
 
 def test_the_timeout_stays_between_its_bounds():
+    """Test that the timeout stays between `min_timeout` and `max_timeout`"""
     low = AdaptiveTimeout(initial_attempt_timeout=ms_to_ns(100), min_timeout=ms_to_ns(90))
     record(low, successes=10)  # 80 ms is below the lowest value allowed
     assert timeout_ms(low) == 90
@@ -121,6 +134,7 @@ def run(service_extra="", client_extra="", front=""):
 
 
 def test_the_settings_in_the_scenario_reach_the_timeout():
+    """Test that the settings in the scenario reach the timeout"""
     client, _ = run(client_extra=(
         "timeout: {type: adaptive, global_ms: 900, attempt_ms: 100, target_percentile: 0.9,"
         " safety_margin: 3, window_size: 60, min_samples: 5, min_ms: 2, max_ms: 400,"
@@ -138,13 +152,17 @@ def test_the_settings_in_the_scenario_reach_the_timeout():
 
 
 def test_a_timeout_without_a_type_stays_fixed():
+    """Test that a timeout without a `type` stays fixed"""
     client, _ = run(client_extra="timeout: {attempt_ms: 100}")
     assert isinstance(client.cfg.timeout, StaticTimeout)
     assert timeout_ms(client.cfg.timeout) == 100
 
 
 def test_the_timeout_of_a_client_follows_the_calls_of_the_client():
-    """Every call takes 20 ms, so the timeout of the client goes from 100 ms to 40 ms."""
+    """Test that the timeout of a client follows the calls of the client.
+
+    Every call takes 20 ms, so the timeout of the client goes from 100 ms to 40 ms.
+    """
     client, _ = run(client_extra="timeout: {type: adaptive, attempt_ms: 100}")
 
     assert len(client.roots) > 20
@@ -153,8 +171,11 @@ def test_the_timeout_of_a_client_follows_the_calls_of_the_client():
 
 
 def test_the_timeout_of_a_service_follows_the_attempts_of_the_service():
-    """The client calls `front`, which calls `svc`. Every attempt of `svc` takes 20 ms,
-    so the timeout of `svc` goes from 100 ms to 40 ms. Each attempt is counted once."""
+    """Test that the timeout of a service follows the attempts of the service.
+
+    The client calls `front`, which calls `svc`. Every attempt of `svc` takes 20 ms,
+    so the timeout of `svc` goes from 100 ms to 40 ms. Each attempt is counted once.
+    """
     client, service = run(
         service_extra="timeout: {type: adaptive, attempt_ms: 100, success_rate_window: 1000}",
         front=FRONT,
@@ -166,9 +187,12 @@ def test_the_timeout_of_a_service_follows_the_attempts_of_the_service():
 
 
 def test_a_shorter_timeout_is_used_for_the_next_attempts():
-    """The timeout of the service goes down to 40 ms. Then the service becomes slow
+    """Test that a shorter timeout is used for the next attempts.
+
+    The timeout of the service goes down to 40 ms. Then the service becomes slow
     (200 ms per attempt), so its attempts are cut off at about 40 ms, not at the
-    starting value of 500 ms."""
+    starting value of 500 ms.
+    """
     client, _ = run(service_extra=(
         "timeout: {type: adaptive, attempt_ms: 500}\n"
         "    latency_injections:\n"
@@ -188,6 +212,7 @@ def test_a_shorter_timeout_is_used_for_the_next_attempts():
     ("attempt_ms: 100, min_samples: 20, window_size: 10", "min_samples <= window_size"),
 ])
 def test_settings_that_cannot_work_are_rejected(settings, message):
+    """Test that settings that cannot work are rejected when the scenario loads"""
     scenario = SCENARIO.format(
         service_extra="", front="", client_extra=f"timeout: {{type: adaptive, {settings}}}"
     )

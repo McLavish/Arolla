@@ -1,10 +1,12 @@
 """
-A rate limiter on a client limits how fast the client sends its retries.
+Test client-side retry rate limiting.
 
-Example used below. The service fails every call for 4 seconds. The client sends
-50 requests per second and retries a failed call up to 3 times, so without a
-limiter it would send about 600 retries. With a bursty limiter of 5 tokens that
-earns 2 tokens back per second, it can send between 5 and 5 + 2 * 4 = 13 retries.
+A client sends 50 requests per second for 4 seconds, with up to three
+retries per failed request. If every call fails, the client would send
+approximately 600 retries without rate limiting.
+
+A token bucket with an initial capacity of 5 tokens and a refill rate
+of 2 tokens per second allows between 5 and 13 retries.
 """
 
 import random
@@ -57,7 +59,10 @@ def retry_times(client):
     ("{type: fixed_window, max_requests: 6, period_ms: 1000}", (6, 24)),
 ])
 def test_the_limiter_holds_back_the_retries_of_the_client(limiter, retries_allowed):
-    """The example at the top of this file."""
+    """Test that the limiter holds back the retries of the client.
+
+    The example at the top of this file.
+    """
     client = run(f"rate_limiter: {limiter}")[0]
 
     requests = len(client.roots)
@@ -68,12 +73,16 @@ def test_the_limiter_holds_back_the_retries_of_the_client(limiter, retries_allow
 
 
 def test_without_a_limiter_every_failed_call_is_retried():
+    """Test that without a limiter every failed call is retried up to `max_attempts`"""
     client = run("")[0]
     assert client.attempts_total == 4 * len(client.roots)
 
 
 def test_a_leaky_limiter_spaces_the_retries():
-    """10 retries per second: two retries are never less than 100 ms apart."""
+    """Test that a leaky limiter spaces the retries.
+
+    10 retries per second: two retries are never less than 100 ms apart.
+    """
     client = run("rate_limiter: {type: leaky, max_requests: 10, period_ms: 1000, max_attempts: 4}")[0]
 
     times = retry_times(client)
@@ -83,8 +92,11 @@ def test_a_leaky_limiter_spaces_the_retries():
 
 
 def test_a_retry_waits_for_the_longer_of_the_two_delays():
-    """The retry policy asks for 10 ms. The leaky limiter has a free slot for the first
-    retry, so it waits 10 ms. The next slot is 100 ms later, so the second waits 100 ms."""
+    """Test that a retry waits for the longer of the policy's and the limiter's delay.
+
+    The retry policy asks for 10 ms. The leaky limiter has a free slot for the first
+    retry, so it waits 10 ms. The next slot is 100 ms later, so the second waits 100 ms.
+    """
     policy = RateLimitedRetryPolicy(
         inner=FixedBackoffRetryPolicy(max_attempts=5, delay=ms_to_ns(10)),
         limiter=LeakyRateLimiterPolicy(max_requests=10, max_attempts=5, period=s_to_ns(1)),
@@ -94,8 +106,11 @@ def test_a_retry_waits_for_the_longer_of_the_two_delays():
 
 
 def test_a_retry_that_the_policy_refuses_does_not_use_the_limiter():
-    """The policy allows 2 attempts. The retry after the second attempt is refused by
-    the policy, so it takes no token from the limiter."""
+    """Test that a retry the policy refuses does not use the limiter.
+
+    The policy allows 2 attempts. The retry after the second attempt is refused by
+    the policy, so it takes no token from the limiter.
+    """
     limiter = BurstyRateLimiterPolicy(max_requests=5, refill_rate=1, period=s_to_ns(1))
     policy = RateLimitedRetryPolicy(
         inner=FixedBackoffRetryPolicy(max_attempts=2, delay=0), limiter=limiter,
@@ -106,8 +121,11 @@ def test_a_retry_that_the_policy_refuses_does_not_use_the_limiter():
 
 
 def test_a_retry_that_the_budget_refuses_does_not_use_the_limiter():
-    """The limiter sits inside the retry budget. The budget pays for 1 retry and
-    refuses the second, so the limiter gives out only 1 of its 5 tokens."""
+    """Test that a retry the budget refuses does not use the limiter.
+
+    The limiter sits inside the retry budget. The budget pays for 1 retry and
+    refuses the second, so the limiter gives out only 1 of its 5 tokens.
+    """
     cfg = ClientConfigYAML.model_validate({
         "name": "client",
         "workload": {"base_rps": 1, "duration_s": 1},
@@ -125,6 +143,7 @@ def test_a_retry_that_the_budget_refuses_does_not_use_the_limiter():
 
 
 def test_each_replica_of_a_client_has_its_own_limiter():
+    """Test that each replica of a client has its own limiter"""
     clients = run("replicas: 2\n    rate_limiter: {type: bursty, max_requests: 5, period_ms: 1000}")
 
     first, second = (client.cfg.retry.limiter for client in clients)
@@ -133,6 +152,7 @@ def test_each_replica_of_a_client_has_its_own_limiter():
 
 
 def test_a_limiter_on_a_client_without_retries_is_rejected():
+    """Test that a rate limiter on a client without retries is rejected"""
     scenario = SCENARIO.format(extra="rate_limiter: {type: bursty, max_requests: 5, period_ms: 1000}")
     scenario = scenario.replace("    retry: {type: fixed, max_attempts: 4, delay_ms: 0}\n", "")
     with pytest.raises(ValueError, match="rate_limiter"):
