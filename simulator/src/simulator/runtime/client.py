@@ -88,7 +88,7 @@ class ClientRuntime:
         up on the call if the service has not answered in time."""
         begin_time = sim.timestep
         if self.cfg.retry is None:
-            call = self._follow_call_without_policy(ctx, sim)
+            call = self._follow_call_without_policy(ctx, sim, begin_time)
         else:
             call = self._follow_call_with_policy(ctx, sim, begin_time)
 
@@ -112,18 +112,25 @@ class ClientRuntime:
             tenant_id=self.cfg.name,
         )
 
-    def _follow_call_without_policy(self, ctx: AttemptCtx, sim: Simulator) -> _Call:
+    def _follow_call_without_policy(self, ctx: AttemptCtx, sim: Simulator, begin_time: TimePoint) -> _Call:
         """The client has no retry policy, but the service may have a retry policy. The
         client records the attempts that the service reports.
 
         If the client timeout elapses before the service has finished, the request
         ends as a failure. Whatever the service reports afterwards is ignored.
         """
+        def on_root_done():
+            if ctx.root.done:
+                return  # the client timeout already ended the request
+            success = bool(ctx.root.attempts) and ctx.root.attempts[-1].success
+            self._report_call_to_timeout(sim, begin_time, success)
+            self._on_root_done(ctx)
+
         return _Call(
             submit=partial(
                 self.service.submit_request, sim,
                 on_attempt_done=partial(self._record_attempt, ctx, sim),
-                on_root_done=partial(self._on_root_done, ctx),
+                on_root_done=on_root_done,
             ),
             answered=lambda: ctx.root.done,
             walk_away=partial(self._on_root_done, ctx),
@@ -147,6 +154,7 @@ class ClientRuntime:
             if over:
                 return  # the client already timed this call out
             over = True
+            self._report_call_to_timeout(sim, begin_time, result.success)
             self._record_attempt(
                 ctx, sim,
                 success=result.success,
@@ -171,6 +179,7 @@ class ClientRuntime:
         service, the client gives up and records a timeout."""
         if ctx.root.done or call.answered():
             return
+        self._report_call_to_timeout(sim, begin_time, success=False)
         self._record_attempt(
             ctx, sim,
             success=False,
@@ -209,9 +218,6 @@ class ClientRuntime:
         req.queue_size_at_end = queue_size
         ctx.root.add_attempt(req)
 
-        if self.cfg.timeout is not None:
-            self.cfg.timeout.record_result(success, req.interval.end - req.interval.begin)
-
         if self.cfg.retry is None:
             return
 
@@ -228,6 +234,10 @@ class ClientRuntime:
             self._on_root_done(ctx)
             return
         sim.schedule(next_start, partial(self._make_attempt, sim, ctx, is_retry=True))
+
+    def _report_call_to_timeout(self, sim: Simulator, begin_time: TimePoint, success: bool):
+        if self.cfg.timeout is not None:
+            self.cfg.timeout.record_result(success, sim.timestep - begin_time)
 
     def _on_root_done(self, ctx: AttemptCtx):
         if not ctx.root.done:

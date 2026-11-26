@@ -9,7 +9,14 @@ For example, a p95 latency of 40 ms yields a timeout of 80 ms.
 import pytest
 
 from simulator.config.loader import ConfigLoader
+from simulator.core.engine import Simulator
+from simulator.core.models import TimeInterval
+from simulator.core.types import DropReason
+from simulator.faults.injection import PartialFailure
+from simulator.policies.retry import FixedBackoffRetryPolicy
 from simulator.policies.timeout import AdaptiveTimeout, StaticTimeout
+from simulator.runtime.client import ClientConfig, ClientRuntime
+from simulator.runtime.service import ServiceConfig, ServiceRuntime
 from simulator.utils.time import ms_to_ns
 
 
@@ -168,6 +175,61 @@ def test_the_timeout_of_a_client_follows_the_calls_of_the_client():
     assert len(client.roots) > 20
     assert all(root.attempts[-1].success for root in client.roots)
     assert timeout_ms(client.cfg.timeout) == pytest.approx(40, abs=0.01)
+
+
+def test_a_call_that_the_service_retries_is_one_result_for_the_client_timeout():
+    """Test that the client timeout observes one result per call, regardless
+    of service-side retries.
+
+    The client has no retry policy. The service's first attempt fails after
+    20 ms, followed by a 10 ms backoff and a successful 20 ms retry.
+    The adaptive timeout records one successful call with a latency of 50 ms,
+    rather than two separate attempt results.
+    """
+    service = ServiceRuntime(cfg=ServiceConfig(
+        name="svc",
+        latency_median=ms_to_ns(20),
+        latency_lognorm_sigma=0.0,
+        workers=1,
+        partial_failures=[PartialFailure(duration=TimeInterval(begin=0, end=ms_to_ns(25)), p_fail=1.0)],
+        retry=FixedBackoffRetryPolicy(max_attempts=2, delay=ms_to_ns(10)),
+    )).bind(seed=1)
+    timeout = AdaptiveTimeout(initial_attempt_timeout=ms_to_ns(100))
+    client = ClientRuntime(cfg=ClientConfig(timeout=timeout), service=service)
+
+    sim = Simulator(seed=1)
+    client.start_request(sim)
+    sim.run()
+
+    (root,) = client.roots
+    assert [a.success for a in root.attempts] == [False, True]
+    assert [ns / ms_to_ns(1) for ns in timeout._latencies] == pytest.approx([50], abs=0.01)
+    assert list(timeout._successes) == [True]
+
+
+def test_the_client_timeout_leaves_time_for_the_retries_of_the_service():
+    """Test that the adaptive client timeout accommodates service-side retries.
+
+    The client has no retry policy. Each service attempt takes 20 ms and has
+    a 30% failure probability, with up to three attempts and a 10 ms backoff.
+    A complete call therefore takes 20, 50 or 80 ms.
+
+    The client adapts its timeout based on complete call latencies, avoiding
+    premature timeouts while the service retries.
+    """
+    client, _ = run(
+        service_extra=(
+            "retry: {type: fixed, max_attempts: 3, delay_ms: 10}\n"
+            "    partial_failures:\n"
+            "      - {type: partial_failure, start_s: 0, end_s: 10, p_fail: 0.3}"
+        ),
+        client_extra="timeout: {type: adaptive, attempt_ms: 200}",
+    )
+
+    attempts = [a for root in client.roots for a in root.attempts]
+    assert any(not a.success for a in attempts)  # the service did retry
+    assert all(a.drop_reason != DropReason.DEADLINE for a in attempts)
+    assert timeout_ms(client.cfg.timeout) > 80
 
 
 def test_the_timeout_of_a_service_follows_the_attempts_of_the_service():
