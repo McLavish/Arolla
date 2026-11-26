@@ -87,26 +87,25 @@ class TimeoutConfig(BaseModel):
     """Configuration for timeout policy"""
     type: TimeoutType = TimeoutType.STATIC
     global_ms: Optional[float] = Field(default=None, ge=0, description="Global timeout in ms")
-    attempt_ms: Optional[float] = Field(default=None, ge=0, description="Per-attempt timeout in ms (adaptive: the starting value)")
+    attempt_ms: Optional[float] = Field(default=None, ge=0, description="Per-attempt timeout in ms. Initial value in adaptive mode")
 
-    # Adaptive only: attempt timeout = target_percentile of the recent successful attempts * safety_margin
-    target_percentile: float = Field(default=0.95, gt=0, lt=1, description="Latency percentile to follow (0.95 = p95)")
-    safety_margin: float = Field(default=2.0, gt=0, description="Factor applied to the percentile")
-    window_size: int = Field(default=100, ge=2, description="Number of recent successful attempts the percentile is taken over")
-    min_samples: int = Field(default=10, ge=2, description="Successful attempts needed before the timeout adapts")
-    min_ms: float = Field(default=1.0, ge=0, description="Lowest attempt timeout in ms")
-    max_ms: Optional[float] = Field(default=None, ge=0, description="Highest attempt timeout in ms")
-    success_rate_window: int = Field(default=50, ge=1, description="Number of recent attempts the success rate is taken over")
-    min_success_rate: float = Field(default=0.5, ge=0, le=1, description="Below this success rate the timeout is raised, up to 10 times")
+    target_percentile: float = Field(default=0.95, gt=0, lt=1, description="Target latency percentile (0.95 = p95)")
+    safety_margin: float = Field(default=2.0, gt=0, description="Latency percentile multiplier")
+    window_size: int = Field(default=100, ge=2, description="Number of recent successful attempts used to calculate the percentile")
+    min_samples: int = Field(default=10, ge=2, description="Minimum number of successful attempts before adapting the timeout")
+    min_ms: float = Field(default=1.0, ge=0, description="Minimum attempt timeout in ms")
+    max_ms: Optional[float] = Field(default=None, ge=0, description="Maximum attempt timeout in ms")
+    success_rate_window: int = Field(default=50, ge=1, description="Number of recent attempts used to calculate the success rate")
+    min_success_rate: float = Field(default=0.5, ge=0, le=1, description="Success rate below which the timeout is increased by up to a factor of 10")
 
     @model_validator(mode="after")
     def _check_adaptive_settings(self):
         if self.type == TimeoutType.ADAPTIVE:
             start = self.attempt_ms if self.attempt_ms is not None else self.min_ms
             if not self.min_ms <= start <= (self.max_ms if self.max_ms is not None else start):
-                raise ValueError("an adaptive timeout needs min_ms <= attempt_ms <= max_ms")
+                raise ValueError("anadaptive timeout needs min_ms <= attempt_ms <= max_ms")
             if self.min_samples > self.window_size:
-                raise ValueError("an adaptive timeout needs min_samples <= window_size, or it never adapts")
+                raise ValueError("an adaptive timeout needs min_samples <= window_size")
         return self
 
 

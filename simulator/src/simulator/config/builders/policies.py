@@ -271,7 +271,7 @@ def build_client_retry_policy(
         return None
 
     if client_cfg_yaml.rate_limiter is not None:
-        # Innermost, so that a retry the breaker or the budget refuses is not counted by the limiter.
+        # Count only retries permitted by the circuit breaker and retry budget.
         policy = RateLimitedRetryPolicy(policy, build_rate_limiter(client_cfg_yaml.rate_limiter))
 
     if client_cfg_yaml.circuit_breaker is not None:

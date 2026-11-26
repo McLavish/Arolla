@@ -62,8 +62,7 @@ class RetryBudgetPolicy(RetryPolicy):
 
 @dataclass
 class RateLimitedRetryPolicy(RetryPolicy):
-    """A client's retry policy behind a rate limiter. A retry that the policy grants
-    also needs the limiter's permission, and waits longer if the limiter says so."""
+    """Wrap a client retry policy with a rate limiter that can reject or delay retries."""
 
     inner: RetryPolicy
     limiter: LoadLimiter

@@ -40,11 +40,12 @@ class StaticTimeout(Timeout):
 
 @dataclass
 class AdaptiveTimeout(Timeout):
-    """An attempt timeout that follows the latency of the recent successful attempts.
+    """Adapt the attempt timeout to the latency of recent successful attempts.
 
-    Example with the defaults: the 95th percentile of the last 100 successful attempts
-    is 40 ms, so the next attempt gets 2 * 40 = 80 ms. While fewer than half of the last
-    50 attempts succeed, the timeout is raised further, up to 10 times.
+    By default, the timeout is twice the p95 latency of the last 100
+    successful attempts (e.g. 40 ms yields an 80 ms timeout).
+    If the success rate over the last 50 attempts falls below 50%,
+    the timeout is increased by up to a factor of 10.
     """
 
     # Configuration
@@ -107,8 +108,8 @@ class AdaptiveTimeout(Timeout):
         success_rate = self._get_success_rate()
 
         if timeout is None:
-            # Too few successes for a percentile, for example because the starting timeout
-            # is too short. The timeout can then only be raised, from its starting value.
+            # Fall back to the initial timeout if too few successful samples exist.
+            # Increase it only if the success rate is below the threshold.
             timeout = self.initial_attempt_timeout
             if timeout is None or success_rate >= self.min_success_rate:
                 return
@@ -127,7 +128,7 @@ class AdaptiveTimeout(Timeout):
 
     def record_result(self, success: bool, latency: TimeDuration) -> None:
         """Record result and update timeout values"""
-        if success:  # how long a failed attempt took says little about how long a success takes
+        if success:
             self._latencies.append(latency)
         self._successes.append(success)
         self._update_timeouts()
