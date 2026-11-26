@@ -1,15 +1,11 @@
 """
-Each client has its own arrival stream.
+Test client arrival streams.
 
-Every client used to draw its arrivals from the workload's `rng_seed` alone, so
-all replicas of a client entry, and all entries sharing a workload block,
-arrived at exactly the same instants: 20 replicas at 30 rps behaved like one
-client sending 20 requests at a time, 30 times a second.
+Clients targeting the same service have independent arrival streams, even
+when they are replicas or share a workload configuration and rng_seed.
 
-The stream now also depends on the entry's rank among the entries that target
-the same service and on the replica index. Entries on different services keep
-identical streams, so policy arms laid out as parallel service stacks stay
-paired, and a scenario with one client per service is unchanged.
+Clients targeting different services receive identical arrival streams,
+allowing policies to be compared under the same traffic.
 """
 
 import random
@@ -62,6 +58,7 @@ def shared_instants(a, b):
 
 class TestArrivalStreams:
     def test_replicas_of_one_entry_arrive_independently(self):
+        """Test that the replicas of one client entry send their requests at different times"""
         seen = arrivals_per_client()
         replicas = [seen["first.0"], seen["first.1"], seen["first.2"]]
 
@@ -72,21 +69,25 @@ class TestArrivalStreams:
         assert not shared_instants(replicas[1], replicas[2])
 
     def test_entries_on_the_same_service_arrive_independently(self):
+        """Test that two client entries on the same service send requests at different times"""
         seen = arrivals_per_client()
 
         for replica in ("first.0", "first.1", "first.2"):
             assert not shared_instants(seen["second"], seen[replica])
 
     def test_arms_on_different_services_stay_paired(self):
-        """Same workload block, different services: replica i of one arm arrives
-        exactly when replica i of the other does."""
+        """Test that entries on different services get the same request times.
+
+        Same workload block, different services: replica i of one entry sends its
+        requests exactly when replica i of the other does.
+        """
         seen = arrivals_per_client()
 
         for i in range(3):
             assert seen[f"other-arm.{i}"] == seen[f"first.{i}"]
 
     def test_the_first_client_of_a_service_keeps_the_configured_stream(self):
-        """A scenario with one client per service is what it was."""
+        """Test that the first client of a service uses the configured `rng_seed` as it is"""
         cfg = WorkloadConfig(base_rps=50, duration_s=4, rng_seed=7)
 
         assert arrival_seed(7) == 7
@@ -96,6 +97,7 @@ class TestArrivalStreams:
         assert [workload._rng.random() for _ in range(5)] == [expected.random() for _ in range(5)]
 
     def test_each_position_and_replica_gets_its_own_stable_seed(self):
+        """Test that every (position, replica) pair gets its own seed, the same on every run"""
         seeds = {
             (position, replica): arrival_seed(7, position, replica)
             for position in range(4)
@@ -105,5 +107,5 @@ class TestArrivalStreams:
         assert seeds == {key: arrival_seed(7, *key) for key in seeds}
         # Another configured seed is another family of streams.
         assert arrival_seed(8, 1, 0) != arrival_seed(7, 1, 0)
-        # No configured seed behaves as seed 0 did.
+        # No configured seed behaves like seed 0.
         assert arrival_seed(None, 1, 0) == arrival_seed(0, 1, 0)

@@ -1,11 +1,9 @@
 """
-A rate limiter on a service gates the service's own retries, and can refuse one.
+Test service-side retry rate limiting.
 
-Refusing used to end the run: to describe why a retry was blocked, the load
-limiter middleware asked the limiter `can_retry()` with no argument, which is
-right for a retry budget and a TypeError for the bursty and the fixed-window
-rate limiters, whose `can_retry` needs the time. A scenario with either limiter
-therefore crashed on the first retry the limiter turned down.
+When the rate limiter rejects a retry, the request fails without stopping
+the simulation. For example, a fixed-window limiter configured at 6 retries
+per second allows at most 24 retries over 4 seconds.
 """
 
 import pytest
@@ -45,6 +43,7 @@ def run(limiter):
     ("{type: fixed_window, max_requests: 6, period_ms: 1000}", (6, 24)),
 ])
 def test_a_refused_retry_does_not_end_the_run(limiter, retries_allowed):
+    """Test that a refused retry does not end the run"""
     client, service = run(limiter)
 
     requests = len(client.roots)
@@ -59,15 +58,14 @@ def test_a_refused_retry_does_not_end_the_run(limiter, retries_allowed):
 
 @pytest.mark.parametrize("kind", ["bursty", "fixed_window", "leaky"])
 def test_a_zero_period_is_rejected_when_the_scenario_loads(kind):
-    # It used to load, and then meant something different for each limiter: the
-    # bursty one never refilled, the leaky one let everything through, and the
-    # fixed-window one divided by zero on the first retry.
+    """Test that a limiter with `period_ms: 0` is refused when the scenario loads"""
     limiter = f"{{type: {kind}, max_requests: 5, period_ms: 0, refill_rate: 2}}"
     with pytest.raises(ValueError, match="period_ms"):
         ConfigLoader.load_from_string(SCENARIO.format(limiter=limiter))
 
 
 def test_the_reason_names_the_limiter():
+    """Test that each limiter names itself in the reason it gives for a refusal"""
     from simulator.policies.load_limiter import BurstyRateLimiterPolicy, LeakyRateLimiterPolicy
     from simulator.policies.retry import RetryContext
     from simulator.policies.retry_controls import (

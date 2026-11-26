@@ -1,14 +1,12 @@
 """
-A response the client has already timed out is ignored.
+Test late responses after client-side attempt timeouts, with and without
+client-side retries.
 
-The client's attempt timeout is local: when it fires, the client records a
-failed attempt and moves on, while the attempt keeps running at the service.
-Its answer, when it finally comes, belongs to a call the client has given up.
+An attempt timeout records a failure on the client without cancelling
+the request at the service. Any subsequent response is ignored.
 
-It used to be processed as a NEW attempt result whenever the request was still
-open (the client was waiting to retry, or its retry was in flight): a late
-success completed the request as a success, and a late failure triggered a
-second retry decision for one timeout.
+For example, with a 15 ms timeout and a 20 ms service time, the client
+records a timeout at 15 ms and ignores the successful response at 20 ms.
 """
 
 from simulator.core.engine import Simulator
@@ -65,7 +63,8 @@ def at_ms(timestamp_ns, expected_ms):
 
 class TestClientWithItsOwnPolicy:
     def test_a_late_success_does_not_complete_the_request(self):
-        """
+        """Test that a late success does not complete the request.
+
         20 ms of service against a 15 ms timeout, two attempts. Both calls time
         out; the answers arrive at 20 and 35 ms and are not results.
         """
@@ -83,7 +82,8 @@ class TestClientWithItsOwnPolicy:
         assert svc.in_flight == 0
 
     def test_a_late_failure_does_not_trigger_a_second_decision(self):
-        """
+        """Test that a late failure does not trigger a second retry decision.
+
         One timeout is one retry decision. With three attempts the calls start
         at 0, 15 and 30 ms; the failure that arrives at 20 ms for the first
         call must not start the third call early.
@@ -98,6 +98,7 @@ class TestClientWithItsOwnPolicy:
         assert len(svc.events) == 3
 
     def test_an_answer_in_time_is_the_result(self):
+        """Test that an answer that arrives before the timeout is the result of the call"""
         svc = make_service(median_ms=10)
         client = make_client(svc, max_attempts=2)
         run_one(client)
@@ -108,8 +109,11 @@ class TestClientWithItsOwnPolicy:
         assert client.attempts_total == 1
 
     def test_a_retry_that_answers_in_time_succeeds_after_a_timed_out_call(self):
-        """The first call is slow (a latency fault makes it 30 ms) and the service is
-        fast again for the retry: [timeout, success]."""
+        """Test that a retry that answers in time succeeds after a call that timed out.
+
+        The first call is slow (a latency fault makes it 30 ms) and the service is
+        fast again for the retry: [timeout, success].
+        """
         from simulator.faults.injection import LatencyInjection
 
         cfg = ServiceConfig(
@@ -136,8 +140,11 @@ class TestClientWithItsOwnPolicy:
 
 class TestClientWithoutAPolicy:
     def test_a_late_success_is_not_counted(self):
-        """No client policy: one call, timed out at 15 ms. The service's answer at
-        20 ms ends the request, which stays a failure."""
+        """Test that a late success is not counted for a client without a policy.
+
+        One call, timed out at 15 ms. The service's answer at 20 ms ends the
+        request, which stays a failure.
+        """
         svc = make_service(median_ms=20)
         client = make_client(svc)
         run_one(client)
@@ -147,7 +154,8 @@ class TestClientWithoutAPolicy:
         assert root.done
 
     def test_a_success_on_the_services_retry_after_the_timeout_is_not_counted(self):
-        """
+        """Test that a success on the service's own retry after the timeout is not counted.
+
         The service retries by itself: its first attempt fails at 20 ms and the
         second succeeds at 40 ms. The client timed out at 15 ms, so the request
         is a failure. The service still makes both attempts because we haven't
@@ -162,9 +170,10 @@ class TestClientWithoutAPolicy:
         assert len(svc.events) == 2
 
     def test_the_timeout_also_covers_the_services_retry(self):
-        """
-        The service first attempt fails at 10 ms, and the retry would
-        succeed at 20 ms. The client 15 ms timeout elapses during the retry and
+        """Test that the client's timeout also applies while the service retries.
+
+        The service's first attempt fails at 10 ms, and the retry would
+        succeed at 20 ms. The client's 15 ms timeout elapses during the retry and
         ends the request.
         """
         svc = make_service(median_ms=10, fail_until_ms=12, max_attempts=2)

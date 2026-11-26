@@ -1,14 +1,15 @@
 """
-A dependency call completes exactly once.
+Test how services handle dependency call results.
 
-A service that calls a dependency is interested in the dependency's REQUEST:
-it must wait until the dependency has finished retrying, and then act once on
-the result of the dependency's last attempt.
+The caller receives one result per dependency call, reflecting the final
+attempt after all retries. For example, a failed attempt followed by a
+successful retry produces one successful call.
 
-Acting on every attempt of the dependency (the old behaviour) made a caller
-fail on the dependency's first failed attempt while the dependency was still
-retrying, and complete again on each later attempt, so that `in_flight` went
-negative and one request produced many times `max_attempts` attempts.
+Tests cover:
+- Sequential dependencies
+- Parallel dependencies
+- Requests that complete without an attempt
+- Stacks of retrying services configured through YAML
 """
 
 from simulator.config.loader import ConfigLoader
@@ -86,7 +87,10 @@ def submit(sim, service, is_retry=False):
 
 class TestSequentialDependency:
     def test_caller_waits_for_the_dependency_to_finish_retrying(self):
-        """D fails its first attempt and succeeds on its retry: A succeeds, once."""
+        """Test that the caller waits for the dependency to finish retrying.
+
+        D fails its first attempt and succeeds on its retry: A succeeds, once.
+        """
         sim = Simulator(seed=1)
         # D's attempts end at 10 ms (inside the fault) and at 20 ms (after it).
         svc_d = make_service("D", fail_until_ms=15, max_attempts=3)
@@ -103,7 +107,10 @@ class TestSequentialDependency:
         assert svc_a.in_flight == 0 and svc_d.in_flight == 0
 
     def test_caller_fails_once_when_the_dependency_gives_up(self):
-        """D fails all three attempts: A reports one failure, after the third."""
+        """Test that the caller fails once when the dependency gives up.
+
+        D fails all three attempts: A reports one failure, after the third.
+        """
         sim = Simulator(seed=1)
         svc_d = make_service("D", fail_until_ms=10_000, max_attempts=3)
         svc_a = make_service("A", deps=[svc_d])
@@ -118,7 +125,10 @@ class TestSequentialDependency:
         assert svc_a.in_flight == 0 and svc_d.in_flight == 0
 
     def test_the_next_dependency_is_called_once(self):
-        """A calls D then E. D's retry must not make A call E a second time."""
+        """Test that the next dependency is called once.
+
+        A calls D then E. D's retry must not make A call E a second time.
+        """
         sim = Simulator(seed=1)
         svc_d = make_service("D", fail_until_ms=15, max_attempts=3)
         svc_e = make_service("E")
@@ -132,7 +142,10 @@ class TestSequentialDependency:
         assert svc_a.in_flight == 0
 
     def test_caller_retries_see_one_result_per_attempt(self):
-        """A retries too: each of A's attempts is one complete request to D."""
+        """Test that each attempt of a retrying caller sees one result.
+
+        A retries too: each of A's attempts is one complete request to D.
+        """
         sim = Simulator(seed=1)
         svc_d = make_service("D", fail_until_ms=10_000, max_attempts=2)
         svc_a = make_service("A", deps=[svc_d], max_attempts=3)
@@ -152,7 +165,10 @@ class TestSequentialDependency:
 
 class TestParallelDependency:
     def test_caller_waits_for_every_dependency_to_finish_retrying(self):
-        """B recovers on its retry while C is already done: A succeeds, once."""
+        """Test that the caller waits for every dependency to finish retrying.
+
+        B recovers on its retry while C is already done: A succeeds, once.
+        """
         sim = Simulator(seed=1)
         svc_b = make_service("B", fail_until_ms=15, max_attempts=3)
         svc_c = make_service("C", median_ms=12)
@@ -167,6 +183,7 @@ class TestParallelDependency:
         assert svc_a.in_flight == 0
 
     def test_caller_fails_once_when_one_dependency_gives_up(self):
+        """Test that the caller fails once when one of its dependencies gives up"""
         sim = Simulator(seed=1)
         svc_b = make_service("B", fail_until_ms=10_000, max_attempts=3)
         svc_c = make_service("C")
@@ -187,7 +204,8 @@ class TestParallelDependency:
 
 class TestRequestsThatEndWithoutAnAttempt:
     def test_dependency_called_at_the_deadline_fails_the_caller(self):
-        """
+        """Test that a dependency called at the deadline fails the caller.
+
         A (15 ms per attempt) calls B, optional and too slow, then C. B is cut
         at A's deadline, so C is called when no time is left and makes no
         attempt. A must fail with a deadline, not wait forever.
@@ -209,7 +227,10 @@ class TestRequestsThatEndWithoutAnAttempt:
         assert svc_a.in_flight == 0
 
     def test_a_request_refused_at_admission_is_finished(self):
-        """A refused retry reports its attempt AND the end of the request."""
+        """Test that a request refused at admission is finished.
+
+        A refused retry reports its attempt AND the end of the request.
+        """
         sim = Simulator(seed=1)
         empty_budget = GlobalRetryBudget(max_tokens=0, refill_rate=0, period=s_to_ns(1))
         svc = make_service("S", load_limiter=empty_budget)
@@ -222,7 +243,10 @@ class TestRequestsThatEndWithoutAnAttempt:
         assert svc.in_flight == 0
 
     def test_caller_of_a_refused_dependency_call_completes(self):
-        """A's retry reaches a dependency that refuses retries: the retry fails, A ends."""
+        """Test that the caller of a refused dependency call completes.
+
+        A's retry reaches a dependency that refuses retries: the retry fails, A ends.
+        """
         sim = Simulator(seed=1)
         empty_budget = GlobalRetryBudget(max_tokens=0, refill_rate=0, period=s_to_ns(1))
         svc_d = make_service("D", fail_until_ms=10_000, load_limiter=empty_budget)
@@ -279,8 +303,11 @@ clients:
 
 class TestRetryStack:
     def test_workers_are_released_once_and_attempts_stay_bounded(self):
-        """Retries at two layers: no service ends with a negative `in_flight`,
-        and no layer makes more than `max_attempts` attempts per call it received."""
+        """Test that workers are released once and attempts stay bounded.
+
+        Retries at two layers: no service ends with a negative `in_flight`, and no
+        layer makes more than `max_attempts` attempts per call it received.
+        """
         cfg = ConfigLoader.load_from_string(RETRY_STACK)
         sim, clients, workloads, _, services = ConfigLoader.build_simulation(cfg)
         for client, workload in zip(clients, workloads):

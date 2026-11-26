@@ -1,14 +1,9 @@
 """
-A client with its own retry policy sees one result per call.
+Test client-visible call outcomes with and without client-side retries.
 
-A call is one `submit_request`. When the service behind it retries on its own,
-it reports several attempts for that one call. The client's policy must decide
-on the CALL: its result is the outcome of the service's last attempt, and it
-exists only when the service has finished.
-
-Deciding on the first attempt (the old behaviour) made `retry: {type: none}`
-on a client hide every retry of the service behind it, and made a retrying
-client start a second call while the service was still retrying the first.
+Each submit_request produces one client-visible result, regardless of how
+many times the service retries. The result reflects the service final
+attempt: two failures followed by a success produce one successful call.
 """
 
 from simulator.core.engine import Simulator
@@ -56,7 +51,10 @@ def at_ms(timestamp_ns, expected_ms):
 
 class TestClientWithItsOwnPolicy:
     def test_no_retry_client_sees_the_services_final_result(self):
-        """The service fails twice and succeeds on its third attempt: one successful call."""
+        """Test that a client without retries sees the service's final result.
+
+        The service fails twice and succeeds on its third attempt: one successful call.
+        """
         svc = make_service(fail_until_ms=25, max_attempts=3)
         client = ClientRuntime(cfg=ClientConfig(retry=NoRetryPolicy()), service=svc)
         run_one(client)
@@ -70,6 +68,7 @@ class TestClientWithItsOwnPolicy:
         assert at_ms(root.attempts[0].interval.end, 30)
 
     def test_no_retry_client_sees_the_failure_when_the_service_gives_up(self):
+        """Test that a client without retries sees a failure when the service gives up"""
         svc = make_service(fail_until_ms=10_000, max_attempts=3)
         client = ClientRuntime(cfg=ClientConfig(retry=NoRetryPolicy()), service=svc)
         run_one(client)
@@ -82,7 +81,8 @@ class TestClientWithItsOwnPolicy:
         assert at_ms(root.attempts[0].interval.end, 30)
 
     def test_retrying_client_does_not_start_a_call_while_the_service_retries(self):
-        """
+        """Test that a retrying client starts no second call while the service still retries.
+
         Client: 2 attempts, 5 ms apart. Service: 3 attempts, the first two fail.
         The first call succeeds at 30 ms; there is no second call.
         """
@@ -99,7 +99,10 @@ class TestClientWithItsOwnPolicy:
         assert at_ms(root.attempts[0].interval.end, 30)
 
     def test_each_client_attempt_is_one_complete_call(self):
-        """Both retry: 2 client calls of 2 service attempts each."""
+        """Test that each client attempt is one complete call.
+
+        Both retry: 2 client calls of 2 service attempts each.
+        """
         svc = make_service(fail_until_ms=10_000, max_attempts=2)
         client = ClientRuntime(
             cfg=ClientConfig(retry=FixedBackoffRetryPolicy(max_attempts=2, delay=ms_to_ns(5))),
@@ -117,8 +120,11 @@ class TestClientWithItsOwnPolicy:
         assert at_ms(root.attempts[1].interval.end, 45)
 
     def test_a_call_the_service_never_attempted_is_a_deadline(self):
-        """Deadline already over at submission: the service makes no attempt and the
-        client must still get a result (it used to wait forever)."""
+        """Test that a call the service never attempted is recorded as a deadline failure.
+
+        The deadline is already over at submission: the service makes no attempt and
+        the client still gets a result.
+        """
         svc = make_service()
         client = ClientRuntime(
             cfg=ClientConfig(retry=NoRetryPolicy(), timeout=StaticTimeout(global_timeout=0)),
@@ -133,7 +139,10 @@ class TestClientWithItsOwnPolicy:
 
 class TestClientWithoutAPolicy:
     def test_it_still_records_every_attempt_the_service_makes(self):
-        """No client policy ("legacy" mode): the service's retry loop is the client's."""
+        """Test that a client without a policy records every attempt the service makes.
+
+        No client policy ("legacy" mode): the service's retry loop is the client's.
+        """
         svc = make_service(fail_until_ms=25, max_attempts=3)
         client = ClientRuntime(cfg=ClientConfig(), service=svc)
         run_one(client)

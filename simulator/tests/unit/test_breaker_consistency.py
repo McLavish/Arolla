@@ -1,11 +1,11 @@
 """
-Every circuit breaker reads `failure_threshold` the same way: it opens when the
-failure rate in its window reaches the threshold (rate >= threshold).
+Test failure thresholds for count-based, time-based and retry circuit
+breakers on both clients and services.
 
-The server-side time-based breaker used to open only above it (rate > threshold),
-so it could never open at a threshold of 1.0. The count-based breaker turned the
-ratio into a count with `int(threshold * window)`, which rounds down: 0.15 of 10
-opened at 1 failure (10 %), and 0.29 of 100 at 28 (0.29 * 100 is 28.999...).
+A breaker opens when the failure rate in its window is greater than or
+equal to failure_threshold. With a threshold of 0.15 and a window of
+10 results, two failures trigger opening, but one does not.
+A threshold of 1.0 requires all results in the window to be failures.
 """
 
 import random
@@ -66,5 +66,6 @@ def refuses_a_retry(side, kind, threshold, window, failures):
     (1.0, 10, 9),       # opens when every result failed
 ])
 def test_every_breaker_opens_exactly_at_the_threshold(side, kind, threshold, window, failures_below):
+    """Test that every breaker stays closed one failure below the threshold and opens at it"""
     assert not refuses_a_retry(side, kind, threshold, window, failures_below)
     assert refuses_a_retry(side, kind, threshold, window, failures_below + 1)

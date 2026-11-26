@@ -1,21 +1,19 @@
 """
-A dependency serves its calls in the order they arrived.
+Test FIFO queue ordering for dependency calls.
 
-When a dependency finishes a call, the worker it frees goes to the call that has
-waited longest in its queue. A caller that reacts to the answer by sending another
-call at the same instant does not get that worker: its new call joins the queue
-behind the calls already there.
+When a worker becomes available, the longest-waiting call takes priority
+over new calls, including those triggered by a response at the same instant.
 
-Example, used by the first test. `db` has one worker, takes 10 ms per call and fails
-every call. `front` has one worker and calls `db`. `other` calls `db` too.
+Example: db has one worker, a service time of 10 ms, and always fails.
+Both front and other call db. The front service also has one worker.
 
-     0 ms   request A reaches `front`, which calls `db`: `db` is busy until 10 ms
-     1 ms   request B reaches `other`, which calls `db`: the call waits at `db`
-     2 ms   request C reaches `front` and waits: `front`'s worker is busy with A
-    10 ms   `db` answers A's call. A fails, `front` starts C, and C calls `db`.
-            B's call has waited since 1 ms, so `db` serves it first.
-    20 ms   `db` answers B's call and starts C's
-    30 ms   `db` answers C's call
+     0 ms  A arrives at front and starts a call to db.
+     1 ms  B arrives at other; its call queues at db.
+     2 ms  C arrives at front and queues behind A.
+    10 ms  A fails. Front starts C, which calls db. B queued call
+           takes priority over C new call.
+    20 ms  B call completes; db starts C call.
+    30 ms  C call completes.
 """
 
 import pytest
@@ -68,7 +66,10 @@ def is_ms(timestamp_ns, expected_ms):
 
 @pytest.mark.parametrize("call_pattern", ["sequential", "parallel"])
 def test_a_waiting_call_is_served_before_a_call_sent_when_the_worker_frees(call_pattern):
-    """The example at the top of this file: B is answered at 20 ms and C at 30 ms."""
+    """Test that a waiting call is served before a call sent when the worker frees.
+
+    The example at the top of this file: B is answered at 20 ms and C at 30 ms.
+    """
     sim = Simulator(seed=1)
     db = make_service("db", workers=1, always_fails=True)
     front = make_service("front", workers=1, deps=[db], call_pattern=call_pattern)
@@ -86,7 +87,9 @@ def test_a_waiting_call_is_served_before_a_call_sent_when_the_worker_frees(call_
 
 
 def test_the_next_sequential_call_also_joins_the_queue():
-    """`front` calls `cache` (optional) and then `db`; `cache` calls `db` itself.
+    """Test that the next call of a sequential caller also joins the queue.
+
+    `front` calls `cache` (optional) and then `db`; `cache` calls `db` itself.
 
      0 ms   request A reaches `front`, which calls `cache`, which calls `db`
      1 ms   request B reaches `other`, which calls `db`: the call waits at `db`
@@ -112,7 +115,10 @@ def test_the_next_sequential_call_also_joins_the_queue():
 
 @pytest.mark.parametrize("call_pattern", ["sequential", "parallel"])
 def test_a_call_reaches_an_idle_dependency_at_the_instant_it_is_sent(call_pattern):
-    """`front` calls `db` (10 ms) and then works for 5 ms: the answer comes at 15 ms."""
+    """Test that a call reaches an idle dependency at the instant it is sent.
+
+    `front` calls `db` (10 ms) and then works for 5 ms: the answer comes at 15 ms.
+    """
     sim = Simulator(seed=1)
     db = make_service("db", workers=1)
     front = make_service("front", workers=1, deps=[db], call_pattern=call_pattern, median_ms=5)

@@ -1,13 +1,12 @@
 """
-The server-side time-based breaker closes when its success rate reaches the threshold.
+Test closing conditions for the server-side time-based circuit breaker.
 
-The close test was written on the failure side: `failure_rate < 1 - success_threshold_rate`.
-At a threshold of 1.0 that is `failure_rate < 0`, which nothing satisfies, so a
-breaker told to close only when every probe succeeds never closed again. And
-since `1 - 0.8` is not `0.2` in binary floating point, 4 successes out of 5 at
-0.8 were refused as well.
-Without a success threshold, it closes once the failure rate is back below the
-rate that caused it to open.
+An open breaker closes when the success rate of recent results reaches
+success_threshold. For example, a threshold of 0.8 requires at least
+4 successes out of 5, while 1.0 requires all results to be successful.
+
+If success_threshold is unset, the breaker closes when the failure rate
+falls below the opening threshold.
 """
 
 import pytest
@@ -40,29 +39,34 @@ def after(breaker, results):
 
 
 def test_closes_when_every_probe_must_succeed_and_does():
-    assert after(opened(1.0), [True] * 5) == CBState.CLOSED     # it stayed OPEN
+    """Test that a threshold of 1.0 closes the breaker after 5 successes out of 5"""
+    assert after(opened(1.0), [True] * 5) == CBState.CLOSED
 
 
 def test_one_failure_keeps_it_open_when_every_probe_must_succeed():
+    """Test that a threshold of 1.0 keeps the breaker open after one failure out of 5"""
     assert after(opened(1.0), [True, True, False, True, True]) == CBState.OPEN
 
 
 def test_closes_at_exactly_the_threshold():
-    assert after(opened(0.8), [True, True, True, True, False]) == CBState.CLOSED   # it stayed OPEN
+    """Test that 4 successes out of 5 close the breaker at a threshold of 0.8"""
+    assert after(opened(0.8), [True, True, True, True, False]) == CBState.CLOSED
 
 
 def test_stays_open_one_success_short_of_the_threshold():
+    """Test that 3 successes out of 5 keep the breaker open at a threshold of 0.8"""
     assert after(opened(0.8), [True, True, True, False, False]) == CBState.OPEN
 
 
 @pytest.mark.parametrize("percent", range(1, 100))
 def test_with_no_success_threshold_it_closes_below_the_failure_threshold(percent):
-    """With no `success_threshold`, the breaker closes once the failure rate drops
+    """Test that a breaker with no `success_threshold` closes once the failure rate drops
+
     below `failure_threshold`.
 
     Example with a threshold of 10 %: the open breaker receives 100 results, 10 of
     them failures. That is exactly 10 %, enough to open a breaker, so it remains open.
-    With one more success, it becomes 10 out of 101 (9.9 %), and it breaker closes.
+    With one more success, it becomes 10 out of 101 (9.9 %), and the breaker closes.
     """
     failure_threshold = percent / 100
     breaker = LimiterTimeBasedCircuitBreakerPolicy(
@@ -83,10 +87,12 @@ def test_with_no_success_threshold_it_closes_below_the_failure_threshold(percent
 
 
 def test_too_few_results_do_not_close_it():
+    """Test that 4 results do not close a breaker that needs at least 5"""
     assert after(opened(0.8, min_requests=5), [True] * 4) == CBState.OPEN
 
 
 def test_it_does_not_close_before_the_open_delay():
+    """Test that successes do not close the breaker before the open delay (500 ms) is over"""
     breaker = opened(0.8)
     # 100 ms after it opened: the ten failures are still in the window anyway.
     for i in range(5):

@@ -1,10 +1,9 @@
 """
-The bursty (token bucket) limiter refills however often it is asked.
+Test token replenishment in the bursty (token bucket) rate limiter.
 
-A refill was truncated to whole tokens on every call while the refill clock
-still moved forward. A limiter asked more often than once per
-`period / refill_rate` therefore added 0 tokens each time and never refilled:
-after its initial burst it denied everything for the rest of the run.
+Tokens accumulate according to refill_rate, regardless of request frequency.
+At 10 tokens per second, requests arriving every 50 ms replenish 0.5 tokens
+between requests, allowing every second request once the bucket is depleted.
 """
 
 import pytest
@@ -35,17 +34,20 @@ def granted(limiter, every_ms, for_s):
 
 
 def test_it_refills_when_asked_more_often_than_a_token_takes():
+    """Test that the limiter refills when it is asked more often than one token takes"""
     # 10 tokens/s, asked every 50 ms for 10 s: one grant every second ask.
-    assert granted(drained(), every_ms=50, for_s=10) == 100   # it was 0
+    assert granted(drained(), every_ms=50, for_s=10) == 100
 
 
 @pytest.mark.parametrize("every_ms", [1, 10, 25, 100])
 def test_the_refill_rate_does_not_depend_on_how_often_it_is_asked(every_ms):
+    """Test that the same number of tokens is earned however often the limiter is asked"""
     # 100 tokens accrue in 10 s; allow one for floating-point accumulation.
     assert 99 <= granted(drained(), every_ms=every_ms, for_s=10) <= 100
 
 
 def test_the_bucket_caps_what_accrues_while_idle():
+    """Test that an idle limiter never holds more than `max_requests` tokens"""
     limiter = drained()
     # 10 idle seconds are 100 tokens; the bucket holds 5.
     now = s_to_ns(10)
@@ -53,6 +55,7 @@ def test_the_bucket_caps_what_accrues_while_idle():
 
 
 def test_less_than_a_token_is_not_a_grant():
+    """Test that a retry is granted only when a whole token is available"""
     limiter = drained()
     assert not limiter.next_delay(RetryContext(attempt=2, now=ms_to_ns(90)))[0]    # 0.9 token
     assert limiter.next_delay(RetryContext(attempt=2, now=ms_to_ns(110)))[0]       # 1.1

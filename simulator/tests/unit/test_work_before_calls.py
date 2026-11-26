@@ -1,11 +1,13 @@
 """
-With `local_work: first` a service does its own work before it calls its dependencies.
+Test the local_work: first option.
 
-By default a service calls its dependencies first and does its own work once they have
-answered. With `local_work: first` the order is reversed. The service keeps its worker
-the whole time in both orders.
+By default, a service performs its local work after its dependency calls
+complete. With local_work: first, it performs local work before calling
+its dependencies. In both cases, the worker remains occupied throughout
+the attempt.
 
-Example used below: service A needs 10 ms for its own work and calls B, which needs 20 ms.
+The tests use service A with 10 ms of local work and a dependency B
+with a service time of 20 ms.
 """
 
 from simulator.config.loader import ConfigLoader
@@ -47,19 +49,24 @@ def ended_at_ms(target):
 
 
 def test_by_default_the_dependency_is_called_first():
+    """Test that by default the dependency is called first"""
     b = service("b", 20)
     assert call(service("a", 10, deps=[b])) == [(30, True, DropReason.NONE)]
     assert ended_at_ms(b) == [20]
 
 
 def test_with_work_first_the_dependency_is_called_after_the_services_own_work():
+    """Test that with `local_work: first` the dependency is called after the service's work"""
     b = service("b", 20)
     assert call(service("a", 10, deps=[b], work_first=True)) == [(30, True, DropReason.NONE)]
     assert ended_at_ms(b) == [30]
 
 
 def test_if_the_work_fails_the_dependency_is_never_called():
-    """By default the dependency has already done its work when the service fails."""
+    """Test that the dependency is never called if the service's own work fails.
+
+    By default the dependency has already done its work when the service fails.
+    """
     b = service("b", 20)
     assert call(service("a", 10, deps=[b], fails=True)) == [(30, False, DropReason.SERVER_FAILURE)]
     assert ended_at_ms(b) == [20]
@@ -70,6 +77,7 @@ def test_if_the_work_fails_the_dependency_is_never_called():
 
 
 def test_if_the_work_runs_past_the_deadline_the_dependency_is_never_called():
+    """Test that the dependency is never called if the service's work runs past the deadline"""
     b = service("b", 20)
     a = service("a", 10, deps=[b], work_first=True, timeout_ms=5)
     assert call(a) == [(5, False, DropReason.DEADLINE)]
@@ -77,12 +85,16 @@ def test_if_the_work_runs_past_the_deadline_the_dependency_is_never_called():
 
 
 def test_the_worker_is_kept_until_the_dependency_has_answered():
-    """One worker and two calls: the second starts when the first is answered, at 30 ms."""
+    """Test that the service keeps its worker until the dependency has answered.
+
+    One worker and two calls: the second starts when the first is answered, at 30 ms.
+    """
     a = service("a", 10, deps=[service("b", 20)], work_first=True, workers=1)
     assert call(a, times=2) == [(30, True, DropReason.NONE), (60, True, DropReason.NONE)]
 
 
 def test_the_yaml_key_reaches_the_service():
+    """Test that the YAML key reaches the service"""
     config = """
 name: work_first
 services:

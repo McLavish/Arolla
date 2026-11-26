@@ -1,9 +1,8 @@
 """
-Simulated time does not go backwards.
+Test monotonicity of the simulation clock.
 
-`schedule()` accepted an instant that had already passed, and running that
-event set the clock back to it. Whatever was measured across that moment got
-an end before its begin.
+Scheduling an event in the past raises a ValueError. For example,
+schedule(50, ...) is invalid when the simulation clock is at 100 ns.
 """
 
 import pytest
@@ -12,6 +11,7 @@ from simulator.core.engine import Simulator
 
 
 def test_an_event_in_the_past_is_refused():
+    """Test that scheduling an event in the past raises an error"""
     sim = Simulator(seed=1)
     seen = []
     sim.schedule(100, lambda: seen.append(sim.timestep))
@@ -24,6 +24,7 @@ def test_an_event_in_the_past_is_refused():
 
 
 def test_an_event_now_or_later_is_accepted():
+    """Test that an event at the current instant or later is accepted"""
     sim = Simulator(seed=1)
     order = []
     sim.schedule(100, lambda: order.append("first"))
@@ -36,6 +37,7 @@ def test_an_event_now_or_later_is_accepted():
 
 
 def test_an_event_cannot_schedule_into_its_own_past():
+    """Test that a running event cannot schedule another event before its own time"""
     sim = Simulator(seed=1)
     errors = []
 
@@ -51,6 +53,7 @@ def test_an_event_cannot_schedule_into_its_own_past():
 
 
 def test_run_until_does_not_move_the_clock_back():
+    """Test that `run(until=...)` refuses an instant before the current time"""
     sim = Simulator(seed=1)
     sim.schedule(300, lambda: None)
     sim.run(until=500)

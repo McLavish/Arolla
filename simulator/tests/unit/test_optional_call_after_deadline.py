@@ -1,19 +1,20 @@
 """
-A failed optional call that answers after the caller's deadline ends the attempt as a timeout.
+Test optional dependency calls that complete after the caller's deadline.
 
-A call that waits in a queue is only reported when a worker reaches it, which can be
-after the deadline. The caller ignores the failure of an optional call, but its own
-deadline has passed, so its attempt has timed out.
+The caller tolerates failures of optional dependencies but must still
+respect its own deadline. Queued calls may report a timeout only when
+a worker becomes available, even if their deadline has already passed.
 
-Example used below. `slow` has one worker and takes 100 ms per call. `front` takes 1 ms
-for its own work, gives up on an attempt after 50 ms, and calls `slow` (optional).
+Example: slow has one worker and a service time of 100 ms. Front has
+a service time of 1 ms, an attempt timeout of 50 ms, and calls slow
+as an optional dependency.
 
-     0 ms   a direct call reaches `slow`, which is busy with it until 100 ms
-    10 ms   a request reaches `front`, which calls `slow`: the call waits in the queue.
-            `front`'s deadline is 60 ms.
-   100 ms   `slow` reaches the call, sees that its deadline has passed and reports a
-            timeout. The call was optional, but `front`'s deadline has passed too, so
-            `front` reports a timeout and frees its worker.
+     0 ms  A direct call occupies slow worker until 100 ms.
+    10 ms  A request arrives at Front. Its dependency call queues at slow.
+           Front deadline is 60 ms.
+   100 ms  Slow dequeues the call and reports a timeout.
+           Front own deadline has expired, so it reports a timeout
+           and releases its worker, despite the dependency being optional.
 """
 
 import pytest
@@ -49,7 +50,10 @@ def is_ms(timestamp_ns, expected_ms):
 
 @pytest.mark.parametrize("call_pattern", ["sequential", "parallel"])
 def test_the_attempt_times_out_when_the_late_answer_arrives(call_pattern):
-    """The example at the top of this file: `front` reports a timeout at 100 ms."""
+    """Test that the attempt times out when the late answer arrives.
+
+    The example at the top of this file: `front` reports a timeout at 100 ms.
+    """
     sim = Simulator(seed=1)
     slow = make_service("slow", median_ms=100, workers=1)
     front = make_service("front", median_ms=1, workers=10, deps=[slow],

@@ -1,10 +1,15 @@
 """
-With `propagate_deadline: true` a client tells the service when it stops waiting.
+Test deadline propagation (propagate_deadline).
 
-A client's attempt timeout is its own. By default the service only knows the deadline
-of the whole request, so a call the client has given up on keeps a worker busy until it
-is done. With `propagate_deadline` the service stops working on the call at that moment.
-The client records the same thing either way.
+By default, the service knows only the overall request deadline, not the
+client attempt timeout. With propagate_deadline enabled, the service
+stops processing the call when the client stops waiting. The client
+records the same outcome in both cases.
+
+Tests cover:
+- Deadline propagation from clients to services
+- Deadline propagation from services to their dependencies, enabled and disabled
+- YAML configuration
 """
 
 import pytest
@@ -56,12 +61,14 @@ def service_attempts(service):
 
 
 def test_by_default_the_service_finishes_a_call_the_client_gave_up_on():
+    """Test that by default the service finishes a call the client gave up on"""
     service = make_service(median_ms=20)
     assert run_one_request(service, propagate_deadline=False) == [(15, DEADLINE)]
     assert service_attempts(service) == [(20, OK)]
 
 
 def test_with_the_deadline_the_service_stops_when_the_client_stops_waiting():
+    """Test that with `propagate_deadline` the service stops when the client stops waiting"""
     service = make_service(median_ms=20)
     assert run_one_request(service, propagate_deadline=True) == [(15, DEADLINE)]
     assert service_attempts(service) == [(15, DEADLINE)]
@@ -69,9 +76,12 @@ def test_with_the_deadline_the_service_stops_when_the_client_stops_waiting():
 
 
 def test_the_service_stops_retrying_once_the_client_has_given_up():
-    """The service takes 10 ms, fails, and retries up to three times. By default it makes
+    """Test that the service stops retrying once the client has given up.
+
+    The service takes 10 ms, fails, and retries up to three times. By default it makes
     all three attempts. With the deadline, its second attempt is cut at 15 ms and there
-    is no third."""
+    is no third.
+    """
     by_default = make_service(median_ms=10, fail_until_ms=100, max_attempts=3)
     run_one_request(by_default, propagate_deadline=False)
     assert service_attempts(by_default) == [(10, FAILURE), (20, FAILURE), (30, FAILURE)]
@@ -82,9 +92,12 @@ def test_the_service_stops_retrying_once_the_client_has_given_up():
 
 
 def test_the_clients_retry_does_not_wait_behind_the_call_it_replaces():
-    """One worker, 20 ms of work, a client that retries once. By default the retry sent at
+    """Test that the client's retry does not wait behind the call it replaces.
+
+    One worker, 20 ms of work, a client that retries once. By default the retry sent at
     15 ms waits until the first call is done at 20 ms. With the deadline, the service has
-    dropped the first call at 15 ms and starts the retry at once."""
+    dropped the first call at 15 ms and starts the retry at once.
+    """
     by_default = make_service(median_ms=20)
     assert run_one_request(by_default, False, max_attempts=2) == [(15, DEADLINE), (30, DEADLINE)]
     assert service_attempts(by_default) == [(20, OK), (40, OK)]
@@ -95,6 +108,7 @@ def test_the_clients_retry_does_not_wait_behind_the_call_it_replaces():
 
 
 def test_an_earlier_deadline_of_the_whole_request_still_applies():
+    """Test that an earlier deadline of the whole request still applies"""
     service = make_service(median_ms=20)
     assert run_one_request(service, propagate_deadline=True, global_ms=10) == [(10, DEADLINE)]
     assert service_attempts(service) == [(10, DEADLINE)]
@@ -125,12 +139,14 @@ def call(target):
 
 
 def test_by_default_a_dependency_stops_at_the_deadline_of_its_caller():
+    """Test that by default a dependency stops at the deadline of its caller"""
     b = make_service(median_ms=20)
     assert call(make_caller([b], propagate_deadline=True)) == (15, DEADLINE)
     assert service_attempts(b) == [(15, DEADLINE)]
 
 
 def test_without_propagation_the_dependency_finishes_after_its_caller_gave_up():
+    """Test that without propagation the dependency finishes after its caller gave up"""
     b = make_service(median_ms=20)
     a = make_caller([b], propagate_deadline=False)
     assert call(a) == (15, DEADLINE)
@@ -140,7 +156,10 @@ def test_without_propagation_the_dependency_finishes_after_its_caller_gave_up():
 
 
 def test_without_propagation_the_dependency_also_keeps_retrying():
-    """B takes 10 ms, fails, and retries up to three times."""
+    """Test that without propagation the dependency also keeps retrying.
+
+    B takes 10 ms, fails, and retries up to three times.
+    """
     b = make_service(median_ms=10, fail_until_ms=100, max_attempts=3)
     assert call(make_caller([b], propagate_deadline=True)) == (15, DEADLINE)
     assert service_attempts(b) == [(10, FAILURE), (15, DEADLINE)]
@@ -151,7 +170,10 @@ def test_without_propagation_the_dependency_also_keeps_retrying():
 
 
 def test_after_giving_up_the_service_does_not_call_its_next_dependency():
-    """A calls B and then C. B answers at 20 ms, after A gave up: C is never called."""
+    """Test that a service that gave up does not call its next dependency.
+
+    A calls B and then C. B answers at 20 ms, after A gave up: C is never called.
+    """
     b, c = make_service(median_ms=20), make_service(median_ms=1)
     assert call(make_caller([b, c], propagate_deadline=False)) == (15, DEADLINE)
     assert service_attempts(b) == [(20, OK)]
@@ -159,7 +181,10 @@ def test_after_giving_up_the_service_does_not_call_its_next_dependency():
 
 
 def test_an_answer_in_time_is_used_as_usual():
-    """B answers after 5 ms, then A does its own 5 ms of work."""
+    """Test that an answer that arrives in time is used as usual.
+
+    B answers after 5 ms, then A does its own 5 ms of work.
+    """
     b = make_service(median_ms=5)
     assert call(make_caller([b], propagate_deadline=False)) == (10, OK)
 
@@ -187,6 +212,7 @@ clients:
 
 
 def test_the_yaml_key_reaches_the_client_and_the_service():
+    """Test that the YAML key reaches the client and the service"""
     _, clients, _, _, services = ConfigLoader.build_simulation(ConfigLoader.load_from_string(CONFIG))
     assert [client.cfg.propagate_deadline for client in clients] == [False, True]
     assert services["api"].propagate_deadline is False
@@ -194,5 +220,6 @@ def test_the_yaml_key_reaches_the_client_and_the_service():
 
 
 def test_the_key_is_refused_on_a_client_without_an_attempt_timeout():
+    """Test that `propagate_deadline` is refused on a client without an attempt timeout"""
     with pytest.raises(ValueError, match="needs timeout.attempt_ms"):
         ConfigLoader.load_from_string(CONFIG.replace("attempt_ms: 15", "global_ms: 100"))

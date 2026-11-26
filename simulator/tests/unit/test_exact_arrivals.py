@@ -1,11 +1,12 @@
 """
-With `exact_arrivals: true` a workload sends its requests at random times, with a rate
-that follows the load spikes exactly.
+Test the exact_arrivals workload option.
 
-By default the first request is sent at t = 0. The gap to the next request is drawn with
-the rate at the time of the previous request, so a load spike only changes the rate at the
-first request after it starts. With `exact_arrivals: true`, the first request comes at a
-random time like all the others, and a load spike starts and ends exactly on time.
+By default, the first request arrives at t = 0, and each interarrival
+time is sampled using the rate at the previous arrival. Rate changes
+therefore take effect only after the next arrival.
+
+With exact_arrivals enabled, all arrival times are random, including
+the first, and rate changes take effect at the specified spike boundaries.
 """
 
 from simulator.config.loader import ConfigLoader
@@ -34,11 +35,15 @@ def count_between(times, start_s, end_s):
 
 
 def test_by_default_the_first_request_is_sent_at_time_zero():
+    """Test that by default the first request is sent at t = 0"""
     assert arrival_times(Workload(base_rps=100, duration_s=1, rng_seed=7))[0] == 0
 
 
 def test_with_exact_arrivals_the_first_request_comes_at_a_random_time():
-    """At 100 requests per second the first request arrives after 10 ms on average."""
+    """Test that with `exact_arrivals` the first request comes at a random time.
+
+    At 100 requests per second the first request arrives after 10 ms on average.
+    """
     firsts = [
         arrival_times(Workload(base_rps=100, duration_s=1, rng_seed=seed, exact_arrivals=True))[0]
         for seed in range(50)
@@ -49,14 +54,18 @@ def test_with_exact_arrivals_the_first_request_comes_at_a_random_time():
 
 
 def test_without_a_load_spike_only_the_request_at_time_zero_is_missing():
+    """Test that without a load spike both modes send the same requests, except at t = 0"""
     default = arrival_times(Workload(base_rps=200, duration_s=2, rng_seed=3))
     exact = arrival_times(Workload(base_rps=200, duration_s=2, rng_seed=3, exact_arrivals=True))
     assert exact == default[1:]
 
 
 def test_a_load_spike_starts_and_ends_on_time():
-    """1 request per second, and 1000 per second from 10 s to 11 s: about 1000 requests
-    arrive in that second, and about 10 in the 10 s after it."""
+    """Test that a load spike starts and ends on time.
+
+    1 request per second, and 1000 per second from 10 s to 11 s: about 1000 requests
+    arrive in that second, and about 10 in the 10 s after it.
+    """
     workload = Workload(
         base_rps=1, duration_s=21, load_spikes=[spike(10, 11, 1000)], rng_seed=5, exact_arrivals=True
     )
@@ -66,9 +75,12 @@ def test_a_load_spike_starts_and_ends_on_time():
 
 
 def test_a_very_short_load_spike_still_gets_its_extra_requests():
-    """1 request per second, and 1000 per second during 100 ms: about 100 requests arrive
+    """Test that a very short load spike still gets its extra requests.
+
+    1 request per second, and 1000 per second during 100 ms: about 100 requests arrive
     in those 100 ms. By default the spike is usually over before the next request, so the
-    default never notices it."""
+    default never notices it.
+    """
     load_spikes = [spike(10.0, 10.1, 1000)]
     exact = [
         count_between(arrival_times(Workload(1, 20, load_spikes, seed, exact_arrivals=True)), 10.0, 10.1)
@@ -83,12 +95,14 @@ def test_a_very_short_load_spike_still_gets_its_extra_requests():
 
 
 def test_nothing_arrives_at_or_after_the_end():
+    """Test that no request arrives at or after the end of the workload"""
     times = arrival_times(Workload(base_rps=500, duration_s=2, rng_seed=1, exact_arrivals=True))
     assert 850 < len(times) < 1150
     assert max(times) < s_to_ns(2)
 
 
 def test_the_yaml_key_reaches_the_workload():
+    """Test that the YAML key reaches the workload"""
     config = """
 name: exact
 services:

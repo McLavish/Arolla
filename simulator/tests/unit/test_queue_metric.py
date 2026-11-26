@@ -1,10 +1,9 @@
 """
-`queue_avg_at_attempt_end` averages queue lengths that were observed.
+Test the queue_avg_at_attempt_end metric.
 
-An attempt the client timed out locally carries the placeholder -1 as its queue
-size: the client walked away and never saw the queue. The placeholder was
-averaged in like a measurement, which pulled the exported queue length down
-exactly when the queue was longest (timeouts are most frequent then).
+The metric averages queue lengths recorded at the end of each attempt.
+Local client timeouts record -1 instead of a queue length and are excluded
+from the average. For example, values of 10, 30 and -1 yield an average of 20.
 """
 
 import math
@@ -41,12 +40,14 @@ def queue_column(attempts):
 
 class TestQueueAverage:
     def test_the_placeholder_is_not_a_measurement(self):
+        """Test that the placeholder -1 is left out of the average"""
         column = queue_column([
             attempt(0.2, 10), attempt(0.4, 30), attempt(0.6, -1, success=False),
         ])
         assert column[0] == 20.0   # (10 + 30) / 2, not (10 + 30 - 1) / 3
 
     def test_a_second_with_only_timeouts_has_no_queue_average(self):
+        """Test that a second with only local timeouts has no queue average (NaN)"""
         column = queue_column([
             attempt(0.5, 4),
             attempt(1.2, -1, success=False), attempt(1.7, -1, success=False),
@@ -55,12 +56,16 @@ class TestQueueAverage:
         assert math.isnan(column[1])
 
     def test_an_empty_queue_is_still_a_measurement(self):
+        """Test that a queue length of 0 is counted in the average"""
         column = queue_column([attempt(0.2, 0), attempt(0.4, 6)])
         assert column[0] == 3.0
 
     def test_a_local_timeout_recorded_by_the_client_does_not_lower_the_average(self):
-        """One worker, 40 ms of service, four requests at t = 0, 15 ms of patience:
-        the last three time out locally while two or more are queued."""
+        """Test that local timeouts recorded by a real client do not lower the average.
+
+        One worker, 40 ms of service, four requests at t = 0, 15 ms of patience:
+        the last three time out locally while two or more are queued.
+        """
         sim = Simulator(seed=1)
         svc = ServiceRuntime(cfg=ServiceConfig(
             name="svc", latency_median=ms_to_ns(40), latency_lognorm_sigma=0.0, workers=1,
@@ -79,4 +84,4 @@ class TestQueueAverage:
         sizes = [a.queue_size_at_end for r in client.roots for a in r.attempts]
         assert sizes.count(-1) == 4          # every call timed out before it was served
         frame = client.metrics().to_dataframe(granularity_s=1.0)
-        assert math.isnan(frame["queue_avg_at_attempt_end"][0])   # it was -1.0
+        assert math.isnan(frame["queue_avg_at_attempt_end"][0])
